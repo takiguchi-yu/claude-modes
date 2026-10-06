@@ -4,6 +4,7 @@
 // 半セル単位で位置をずらせるので、1 ピクセルずつ滑らかに歩ける。
 
 import { type Facing, MASCOT_HEIGHT, type MascotId, MASCOTS, type Pose } from './mascots'
+import { propBitmap, type PropId } from './props'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -27,6 +28,8 @@ export type Actor = {
   readonly lift?: number
   /** 絵の右横に描く記号。驚き（!）と居眠り（zZ。high で 1 行上） */
   readonly emote?: Emote
+  /** 手に持つ道具。side の側に描き、raised なら 1 ピクセル上げる */
+  readonly prop?: { readonly kind: PropId; readonly side: 'left' | 'right'; readonly raised: boolean }
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
@@ -82,6 +85,22 @@ export function paint(actors: readonly Actor[], columns: number): string {
         canvas[y * width + x] = actor.color
       }),
     )
+    if (actor.prop !== undefined) {
+      // 道具は絵の左右の端の塗りから 1 ピクセル空けて置く。帯からはみ出す分は切る
+      const tool = propBitmap(actor.prop.kind, actor.prop.side)
+      const toolWidth = tool[0]!.length
+      const lit = bitmap.flatMap(row => row.flatMap((on, i) => (on ? [i] : [])))
+      const left =
+        actor.prop.side === 'right' ? actor.x + Math.max(...lit) + 2 : actor.x + Math.min(...lit) - 1 - toolWidth
+      const dy = actor.prop.raised ? -1 : 0
+      tool.forEach((row, ty) =>
+        row.forEach((on, tx) => {
+          const x = left + tx
+          const y = ty + dy
+          if (on && x >= 0 && x < width && y >= 0 && y < height) canvas[y * width + x] = actor.color
+        }),
+      )
+    }
     if (actor.emote !== undefined) {
       // 記号はこのコマの絵の右端の塗りから 1 ピクセル以上空けて置く。帯からはみ出す分は切る
       const right = Math.max(...bitmap.map(row => row.lastIndexOf(true)))

@@ -10,6 +10,7 @@
 
 import { FRIENDS, type MascotId, MASCOTS } from './mascots'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
+import { PROP_FRAMES, propFor, type PropId } from './props'
 import { type Actor, ORANGE } from './sprite'
 import { poseOf, start, step, type Wanderer } from './wander'
 
@@ -31,6 +32,8 @@ export type Member = {
   readonly idle: number
   /** 驚きの残りコマ数。0 なら驚いていない */
   readonly startle: number
+  /** 手に持っている道具と残りコマ数。持っていなければ null（.scratch/props/spec.md） */
+  readonly prop: { readonly kind: PropId; readonly left: number } | null
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（20 秒） */
@@ -44,7 +47,7 @@ const Z_EVERY = 5
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, startle: 0 },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, startle: 0, prop: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -92,7 +95,7 @@ export function sync(crew: Crew, agentIds: readonly string[], random: () => numb
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, startle: 0 }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, startle: 0, prop: null }))
   }
   return [main, ...kept, ...added]
 }
@@ -125,6 +128,7 @@ export function advance(crew: Crew, canvas: number, random: () => number): Crew 
       presence: elapse(m.presence),
       idle: isHere ? m.idle + 1 : 0,
       startle: Math.max(0, m.startle - 1),
+      prop: m.prop !== null && m.prop.left > 1 ? { ...m.prop, left: m.prop.left - 1 } : null,
     }
   })
   return next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
@@ -149,7 +153,13 @@ export function actors(crew: Crew): Actor[] {
         return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
       }
       if (fading === null) {
-        return { ...base, facing: m.wanderer.facing, pose: poseOf(m.wanderer) }
+        const pose = poseOf(m.wanderer)
+        const facing = m.wanderer.facing
+        if (m.prop === null) return { ...base, facing, pose }
+        // T4: 向いている側に道具を持つ。ハンマーは脚のコマに合わせて上下する（R5・R6）
+        const side = facing === 'left' ? ('left' as const) : ('right' as const)
+        const raised = m.prop.kind === 'hammer' && pose === 'stepB'
+        return { ...base, facing, pose, prop: { kind: m.prop.kind, side, raised } }
       }
       return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
     })
@@ -165,4 +175,14 @@ export function poke(crew: Crew, id: string, failed: boolean): Crew {
       ? m
       : { ...m, idle: 0, startle: failed && m.presence.kind === 'here' ? STARTLE_FRAMES : m.startle },
   )
+}
+
+/**
+ * id の 1 体に、ツール `tool` に対応する道具を持たせ、残りを PROP_FRAMES にする。
+ * 道具を持つのは活動なので、途切れも 0 に戻す。対応しないツール、いない id では何もしない。
+ */
+export function wield(crew: Crew, id: string, tool: string): Crew {
+  const kind = propFor(tool)
+  if (kind === null) return crew
+  return crew.map(m => (m.id !== id ? m : { ...m, idle: 0, prop: { kind, left: PROP_FRAMES } }))
 }

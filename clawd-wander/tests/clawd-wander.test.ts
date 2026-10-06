@@ -1,7 +1,8 @@
 import type { AgentInfo, AgentStatus, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actors, advance, agentCount, assemble, type Crew, DOZE_FRAMES, isVisible, join, MAIN, MAX_AGENTS, poke, setMain, STARTLE_FRAMES, sync } from '../hooks/crew'
+import { actors, advance, agentCount, assemble, type Crew, DOZE_FRAMES, isVisible, join, MAIN, MAX_AGENTS, poke, setMain, STARTLE_FRAMES, sync, wield } from '../hooks/crew'
+import { PROP_FRAMES, propFor } from '../hooks/props'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
@@ -639,6 +640,108 @@ test('register: ツールの呼び出しが失敗すると、本体が「!」を
   await $.tool.call({ tool: 'Read', file_path: 'a.md' })
   await clock.advance(200)
   expect(hasBang(pixels(decode(frames[frames.length - 1]!, 40).lines))).toBe(true)
+  await ui.unmount()
+})
+
+// ---- 道具（.scratch/props/spec.md） -------------------------------------------
+
+const litCount = (lines: string[]) => pixels(lines).flat().filter(Boolean).length
+
+test('契約 propFor・R1・R2・R3: 編集系はハンマー、調べる系は虫めがね、それ以外は無し', () => {
+  for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(propFor(tool)).toBe('hammer')
+  for (const tool of ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']) expect(propFor(tool)).toBe('magnifier')
+  for (const tool of ['Bash', 'Agent', 'mcp__x__y']) expect(propFor(tool)).toBeNull()
+})
+
+test('R1・R2・契約 wield: 呼び出し元だけが持ち、残りは 30 コマ、途切れは 0 に戻る', () => {
+  const crew = advanceBy(sync(advanceBy(hereMain(), 50, 200), ['a'], () => 0, 200), FADE_FRAMES, 200)
+  const held = wield(crew, 'a', 'Edit')
+  expect(held[1]!.prop).toEqual({ kind: 'hammer', left: PROP_FRAMES })
+  expect(held[1]!.idle).toBe(0)
+  expect(held[0]!.prop).toBeNull()
+  expect(wield(held, 'a', 'Grep')[1]!.prop).toEqual({ kind: 'magnifier', left: PROP_FRAMES }) // 持ち替え
+})
+
+test('R3・R10: 対応しないツールや、いない id では何も変わらない', () => {
+  const held = wield(hereMain(), MAIN, 'Edit')
+  expect(wield(held, MAIN, 'Bash')).toBe(held)
+  expect(wield(held, 'nobody', 'Edit')).toEqual(held)
+})
+
+test('R4: 30 コマで道具をしまう', () => {
+  const held = wield(hereMain(), MAIN, 'Read')
+  expect(advanceBy(held, PROP_FRAMES - 1, 200)[0]!.prop).not.toBeNull()
+  expect(advanceBy(held, PROP_FRAMES, 200)[0]!.prop).toBeNull()
+})
+
+test('R5・T4: 右向きは右に、左向きは左に反転して、絵の端から 1 ピクセル空けて描く', () => {
+  const right = actors(wield(hereMain(), MAIN, 'Edit'))[0]!
+  expect(right.prop).toMatchObject({ kind: 'hammer', side: 'right' })
+  const leftCrew: Crew = [{ ...wield(hereMain(), MAIN, 'Read')[0]!, wanderer: { x: 50, facing: 'left', mode: 'rest', left: 50, gait: 'walk', frame: 0 } }]
+  expect(actors(leftCrew)[0]!.prop).toMatchObject({ kind: 'magnifier', side: 'left' })
+
+  const stand = MASCOTS.clawd.draw('right', 'stepA')
+  const lit = stand.flatMap(row => row.flatMap((on, i) => (on ? [i] : [])))
+  // 右: ハンマーの頭（上 2 行・幅 5）が右端の塗り + 2 から始まる
+  const r = pixels(decode(paint([clawd(0, { facing: 'right', pose: 'stepA', prop: { kind: 'hammer', side: 'right', raised: false } })], 20), 20).lines)
+  const hx = Math.max(...lit) + 2
+  expect([0, 1, 2, 3, 4].map(dx => r[0]![hx + dx])).toEqual([true, true, true, true, true])
+  expect(r[0]![hx - 1]).toBe(false)
+  // 左: 反転した虫めがね（柄が左下）が左端の塗り − 1 で終わる
+  const l = pixels(decode(paint([clawd(20, { facing: 'left', pose: 'stepA', prop: { kind: 'magnifier', side: 'left', raised: false } })], 20), 20).lines)
+  const mx = 20 + Math.min(...lit) - 1 - 6
+  expect(l[5]![mx]).toBe(true) // 反転した柄の先
+  expect(l[1]![mx + 5]).toBe(true) // レンズの右端
+  expect(l[1]![mx + 6]).toBe(false) // 絵との間は 1 ピクセル空く
+})
+
+test('R6・R7: 持ったまま歩き、ハンマーは脚のコマに合わせて上下する', () => {
+  let crew = wield(hereMain(), MAIN, 'Edit')
+  const raised = new Set<boolean>()
+  for (let i = 0; i < 8; i += 1) {
+    const actor = actors(crew)[0]!
+    raised.add(actor.prop!.raised)
+    expect(actor.prop!.raised).toBe(actor.pose === 'stepB')
+    crew = advanceBy(crew, 1, 200)
+  }
+  expect(raised).toEqual(new Set([true, false]))
+  expect(crew[0]!.wanderer.x).toBeGreaterThan(50) // 持っていても歩く
+  // 虫めがねは上下しない
+  const looking = wield(hereMain(), MAIN, 'Grep')
+  for (let i = 0, c = looking; i < 8; i += 1, c = advanceBy(c, 1, 200)) expect(actors(c)[0]!.prop!.raised).toBe(false)
+  // 上げたハンマーは 1 ピクセル上に描く（柄の下端が 1 行上がる）
+  const at = (raisedFlag: boolean) =>
+    pixels(decode(paint([clawd(0, { prop: { kind: 'hammer', side: 'right', raised: raisedFlag } })], 20), 20).lines)
+  const handle = 16 + 2 + 2
+  expect(at(false)[4]![handle]).toBe(true)
+  expect(at(true)[4]![handle]).toBe(false)
+  expect(at(true)[3]![handle]).toBe(true)
+})
+
+test('R8・T1・T2・T3: 驚き中・出入り中・道具が無いときは描かない', () => {
+  expect(actors(poke(wield(hereMain(), MAIN, 'Edit'), MAIN, true))[0]!.prop).toBeUndefined() // T2
+  expect(actors(wield(setMain(assemble(), true), MAIN, 'Edit'))[0]!.prop).toBeUndefined() // T1 現れかけ
+  expect(actors(setMain(wield(hereMain(), MAIN, 'Edit'), false))[0]!.prop).toBeUndefined() // T1 跳ねる
+  expect(actors(hereMain())[0]!.prop).toBeUndefined() // T3
+})
+
+test('register: Edit の呼び出しで本体がハンマーを持つ', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const before = litCount(decode(frames[frames.length - 1]!, 60).lines)
+  await $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'a', new_string: 'b' } as never)
+  await clock.advance(200)
+  const after = litCount(decode(frames[frames.length - 1]!, 60).lines)
+  expect(after - before).toBeGreaterThanOrEqual(8) // ハンマーの分（上げていれば頭の 1 行が切れる）
   await ui.unmount()
 })
 

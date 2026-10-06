@@ -14,6 +14,7 @@
 //   タイマーは 1 秒ごとに鼓動（lastBeat）を残す。帯の描き直しとツール呼び出しのたびに、
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
 // tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
+//   編集系のツールならハンマー、調べる系なら虫めがねを持たせる（.scratch/props/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -21,7 +22,7 @@
 
 import type { AgentInfo, AgentStatus, EngineInterface, Register } from 'claude-code'
 
-import { actors, advance, assemble, type Crew, isVisible, join, MAIN, poke, setMain, sync } from './crew'
+import { actors, advance, assemble, type Crew, isVisible, join, MAIN, poke, setMain, sync, wield } from './crew'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -63,9 +64,9 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     keepAlive($).catch(() => undefined)
     const id = e.agentId ?? MAIN
-    crew = poke(crew, id, false)
+    crew = wield(poke(crew, id, false), id, e.tool)
     const result = await next(e)
-    crew = poke(crew, id, result.deny !== undefined || result.isError === true)
+    crew = wield(poke(crew, id, result.deny !== undefined || result.isError === true), id, e.tool)
     return result
   })
 
