@@ -1,7 +1,26 @@
 import type { AgentInfo, AgentStatus, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actors, advance, agentCount, assemble, type Crew, DOZE_FRAMES, isVisible, join, MAIN, MAX_AGENTS, poke, setMain, STARTLE_FRAMES, sync, wield } from '../hooks/crew'
+import {
+  actors,
+  advance,
+  agentCount,
+  assemble,
+  type Crew,
+  DOZE_FRAMES,
+  isVisible,
+  join,
+  lineUp,
+  MAIN,
+  MAX_AGENTS,
+  PARADE_CHANCE,
+  poke,
+  setMain,
+  STARTLE_FRAMES,
+  sync,
+  wield,
+} from '../hooks/crew'
+import { begin, record, slot, TRAIL } from '../hooks/parade'
 import { PROP_FRAMES, propFor } from '../hooks/props'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
@@ -893,4 +912,144 @@ test('Raster の無い画面では描かない', async ($, on) => {
   const ui = await $.ui.mount({ ...band(true), surface: 'desktop' })
   expect(await ui.find({ key: 'clawd' })).toBeUndefined()
   await ui.unmount()
+})
+
+// ---- カルガモ行列（.scratch/parade/spec.md） -------------------------------------
+
+/** 本体と、いる仲間（a, b。どちらも x = 0）。本体は右向きにずっと歩く */
+const withFriends = (canvas = 400): Crew => advanceBy(sync(hereMain(), ['a', 'b'], () => 0, canvas), FADE_FRAMES, canvas)
+
+/** 行列で k 番目の仲間が本体からさかのぼる距離（R4） */
+const offsets = (crew: Crew): number[] => {
+  let offset = 0
+  let ahead = MASCOTS[crew[0]!.mascot].width
+  return crew.slice(1).map(m => {
+    offset += Math.max(ahead, MASCOTS[m.mascot].width) + 2
+    ahead = MASCOTS[m.mascot].width
+    return offset
+  })
+}
+
+/** 本体を x に置き、向きを facing にした顔ぶれ */
+const placeMain = (crew: Crew, x: number, facing: Wanderer['facing'] = 'right'): Crew => [
+  { ...crew[0]!, wanderer: { ...crew[0]!.wanderer, x, facing } },
+  ...crew.slice(1),
+]
+
+test('R1・R2・S1・契約 lineUp: 条件を満たし乱数が 1/150 未満なら広いほうを向いて始まり、満たさなければ乱数を使わない', () => {
+  const crew = withFriends()
+  const started = lineUp(crew, seq(0, 0), 400)
+  expect(started[0]!.parade!.left).toBe(80)
+  expect(started[0]!.parade!.heading).toBe('right') // 本体は x = 74、右のほうが広い
+  // 右寄りにいて左を向いていなくても、広い左へ向き直る
+  const leftward = lineUp(placeMain(crew, 300, 'right'), seq(0, 0), 400)
+  expect([leftward[0]!.parade!.heading, leftward[0]!.wanderer.facing]).toEqual(['left', 'left'])
+  expect(lineUp(crew, seq(0, 0.9999), 400)[0]!.parade!.left).toBe(150)
+  expect(lineUp(crew, seq(PARADE_CHANCE, 0), 400)[0]!.parade).toBeNull()
+  expect(crew[0]!.parade).toBeNull() // 元の顔ぶれは変わらない
+  let calls = 0
+  const counting = () => {
+    calls += 1
+    return 0
+  }
+  lineUp(hereMain(), counting, 400) // 仲間がいない
+  lineUp(poke(crew, MAIN, true), counting, 400) // 本体が驚いている
+  lineUp(lineUp(crew, seq(0, 0), 400), counting, 400) // すでに行列している
+  lineUp(placeMain(crew, 10), counting, 400) // 後ろ（左）に列が収まらない
+  expect(calls).toBe(0)
+})
+
+test('R9: 本体の後ろにいる仲間は近い順、前にいる仲間はそのあとに並ぶ', () => {
+  const crew = withFriends()
+  const x = crew[0]!.wanderer.x
+  const placed: Crew = [
+    crew[0]!,
+    { ...crew[1]!, wanderer: { ...crew[1]!.wanderer, x: x + 40 } }, // a は前
+    { ...crew[2]!, wanderer: { ...crew[2]!.wanderer, x: x - 30 } }, // b は後ろ
+  ]
+  expect(lineUp(placed, seq(0, 0), 400).slice(1).map(m => m.id)).toEqual(['b', 'a'])
+})
+
+test('R2・契約 begin: 道筋は本体の後ろへまっすぐ延び、帯の中に収まる', () => {
+  const right = begin(50, 'right', 100, 80)
+  expect(right.trail).toHaveLength(TRAIL)
+  expect([right.trail.at(-1), slot(right, 10), slot(right, 60)]).toEqual([50, 40, 0])
+  const left = begin(50, 'left', 100, 80)
+  expect([slot(left, 10), slot(left, 60)]).toEqual([60, 100])
+  expect(left.trail.every(x => x >= 0 && x <= 100)).toBe(true)
+})
+
+test('R3・契約 record・slot: 通った位置を 1 ピクセルずつ足し、さかのぼった位置を返す', () => {
+  let p = record(begin(50, 'right', 300, 80), 53)
+  expect(p.trail.slice(-4)).toEqual([50, 51, 52, 53])
+  p = record(p, 51) // 引き返す
+  expect(p.trail.slice(-3)).toEqual([53, 52, 51])
+  expect(slot(p, 2)).toBe(53)
+  expect(p.trail).toHaveLength(TRAIL)
+  expect(slot(p, TRAIL + 50)).toBe(p.trail[0])
+  expect(record(p, 1000).trail.at(-1)).toBe(1000) // 大きく飛んでも最後は本体の位置
+})
+
+test('R3・R4・R5: 本体は 1 コマ 1 ピクセルでまっすぐ進み、仲間は並び順に本体の後ろへ並んで重ならない。仲間は 1 コマ 4 ピクセルまで', () => {
+  let crew = lineUp(withFriends(), seq(0, 0), 400)
+  for (let i = 0; i < 60; i += 1) {
+    const before = crew
+    crew = advanceBy(crew, 1, 400)
+    expect(crew[0]!.wanderer.x - before[0]!.wanderer.x).toBe(1) // 引き返さず、立ち止まらない
+    expect(crew[0]!.wanderer.facing).toBe('right')
+    crew.slice(1).forEach((m, k) => expect(Math.abs(m.wanderer.x - before[k + 1]!.wanderer.x)).toBeLessThanOrEqual(4))
+  }
+  const main = crew[0]!
+  const [a, b] = crew.slice(1)
+  expect(main.parade).not.toBeNull()
+  expect(offsets(crew).map(o => main.wanderer.x - o)).toEqual([a!.wanderer.x, b!.wanderer.x])
+  expect(a!.wanderer.x + MASCOTS[a!.mascot].width + 2).toBeLessThanOrEqual(main.wanderer.x)
+  expect(b!.wanderer.x + MASCOTS[b!.mascot].width + 2).toBeLessThanOrEqual(a!.wanderer.x)
+  expect(actors(crew).slice(1).map(x => x.facing)).toEqual(['right', 'right'])
+  // 本体が驚いて止まると、仲間も進まずに直立する
+  const still = advanceBy(poke(crew, MAIN, true), 1, 400)
+  expect(still[0]!.wanderer.x).toBe(main.wanderer.x)
+  expect(still.slice(1).map(m => m.wanderer.x)).toEqual([a!.wanderer.x, b!.wanderer.x])
+  expect(actors(still).slice(1).map(x => x.pose)).toEqual(['stand', 'stand'])
+})
+
+test('R3・R4: 並び終えたあとは、行列が終わるまで誰も重ならない（折り返さない）', () => {
+  let crew = advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 30, 400)
+  let frames = 0
+  while (crew[0]!.parade !== null) {
+    const spans = crew.map(m => [m.wanderer.x, m.wanderer.x + MASCOTS[m.mascot].width] as const).sort((p, q) => p[0] - q[0])
+    spans.slice(1).forEach((span, i) => expect(span[0]).toBeGreaterThanOrEqual(spans[i]![1]))
+    crew = advanceBy(crew, 1, 400)
+    frames += 1
+  }
+  expect(frames).toBeGreaterThan(100)
+})
+
+test('R6・S5・S6: 残りが尽きる・端に着く・本体が消え始めると行列をやめ、本体と仲間は立ち止まってから自分で歩く', () => {
+  const crew = withFriends()
+  const short: Crew = [{ ...crew[0]!, parade: begin(crew[0]!.wanderer.x, 'right', 382, 2) }, ...crew.slice(1)]
+  const ended = advanceBy(short, 2, 400)
+  expect(ended[0]!.parade).toBeNull()
+  expect(ended.map(m => m.wanderer.mode)).toEqual(['pause', 'pause', 'pause'])
+  expect(ended[1]!.wanderer.left).toBe(10) // 5〜15 コマ（乱数 0.5）
+  // 端（x = 382）に着くとやめる
+  const nearEdge = placeMain(crew, 381)
+  const edge: Crew = [{ ...nearEdge[0]!, parade: begin(381, 'right', 382, 100) }, ...nearEdge.slice(1)]
+  const arrived = advanceBy(edge, 1, 400)
+  expect([arrived[0]!.wanderer.x, arrived[0]!.parade !== null]).toEqual([382, true])
+  expect(advanceBy(arrived, 1, 400)[0]!.parade).toBeNull()
+  // 本体が消え始めると、すぐにやめる
+  const leaving = advanceBy(setMain(lineUp(crew, seq(0, 0), 400), false), 1, 400)
+  expect(leaving[0]!.parade).toBeNull()
+})
+
+test('R7: 驚いている仲間は進まず、驚き終えると追いつく', () => {
+  // 並び終えてから驚かせる（行列は 150 コマ）
+  let crew = poke(advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 60, 400), 'a', true)
+  const x = crew[1]!.wanderer.x
+  crew = advanceBy(crew, STARTLE_FRAMES - 1, 400)
+  expect(crew[1]!.wanderer.x).toBe(x)
+  crew = advanceBy(crew, 20, 400)
+  expect(crew[0]!.parade).not.toBeNull()
+  expect(crew[1]!.wanderer.x).toBe(crew[0]!.wanderer.x - offsets(crew)[0]!)
 })

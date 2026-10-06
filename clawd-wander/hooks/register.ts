@@ -15,6 +15,7 @@
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
 // tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
 //   編集系のツールならハンマー、調べる系なら虫めがねを持たせる（.scratch/props/spec.md）。
+// 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -22,7 +23,7 @@
 
 import type { AgentInfo, AgentStatus, EngineInterface, Register } from 'claude-code'
 
-import { actors, advance, assemble, type Crew, isVisible, join, MAIN, poke, setMain, sync, wield } from './crew'
+import { actors, advance, assemble, type Crew, isVisible, join, lineUp, MAIN, poke, setMain, sync, wield } from './crew'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -109,7 +110,7 @@ function tick($: EngineInterface) {
       () => undefined,
     )
   }
-  crew = advance(crew, stage.columns * 2, Math.random)
+  crew = advance(lineUp(crew, Math.random, stage.columns * 2), stage.columns * 2, Math.random)
   if (!isVisible(crew)) {
     // 最後の 1 体が消えきった。帯を描き直させ、描くものが無ければ次のコマで止まる
     $.ui.invalidate('ui.render')
