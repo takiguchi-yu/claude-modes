@@ -4,6 +4,7 @@
 // 新しく来た仲間は、まだいない種類の絵でランダムな位置に現れる。
 // 現れるときは上から降りながら、いなくなるときは浮き上がりながら、その場でふわっと出入りする
 // （出入りの状態遷移は presence.ts）。現れかけ・消えかけの間は歩かない。
+// ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く（.scratch/emotes/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
 
@@ -26,11 +27,25 @@ export type Member = {
   readonly wanderer: Wanderer
   /** 出入りの状態。'gone' のまま顔ぶれに残るのは本体だけ */
   readonly presence: Presence
+  /** 最後の活動（ツールの呼び出し）からのコマ数。いる間だけ数える */
+  readonly idle: number
+  /** 驚きの残りコマ数。0 なら驚いていない */
+  readonly startle: number
 }
+
+/** 活動がこのコマ数途切れたら居眠りする（20 秒） */
+export const DOZE_FRAMES = 200
+/** 驚いているコマ数（2 秒）。最初の SHAKE_FRAMES コマだけ震える */
+export const STARTLE_FRAMES = 20
+const SHAKE_FRAMES = 8
+/** 居眠りの z を何コマごとに上下させるか */
+const Z_EVERY = 5
 
 export type Crew = readonly Member[]
 
-export const assemble = (): Crew => [{ id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE }]
+export const assemble = (): Crew => [
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, startle: 0 },
+]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
 export const agentCount = (crew: Crew): number => crew.length - 1
@@ -77,7 +92,7 @@ export function sync(crew: Crew, agentIds: readonly string[], random: () => numb
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, startle: 0 }))
   }
   return [main, ...kept, ...added]
 }
@@ -100,11 +115,18 @@ export function join(crew: Crew, id: string, random: () => number, canvas: numbe
  * 消えきった仲間は外す。本体は外さない。
  */
 export function advance(crew: Crew, canvas: number, random: () => number): Crew {
-  const next = crew.map(m => ({
-    ...m,
-    wanderer: m.presence.kind === 'here' ? step(m.wanderer, roomFor(m.mascot, canvas), random) : m.wanderer,
-    presence: elapse(m.presence),
-  }))
+  const next = crew.map(m => {
+    const isHere = m.presence.kind === 'here'
+    // デシジョンテーブル T2〜T4: 驚いている・居眠りしている間は歩かない
+    const walks = isHere && m.startle === 0 && m.idle < DOZE_FRAMES
+    return {
+      ...m,
+      wanderer: walks ? step(m.wanderer, roomFor(m.mascot, canvas), random) : m.wanderer,
+      presence: elapse(m.presence),
+      idle: isHere ? m.idle + 1 : 0,
+      startle: Math.max(0, m.startle - 1),
+    }
+  })
   return next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
 }
 
@@ -115,9 +137,32 @@ export function actors(crew: Crew): Actor[] {
     .map(m => {
       const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color }
       const fading = look(m.presence)
+      if (fading === null && m.startle > 0) {
+        // T2: 「!」を出す。最初の SHAKE_FRAMES コマは 1 コマごとに左右へ 1 ピクセル震える
+        const shaking = m.startle > STARTLE_FRAMES - SHAKE_FRAMES
+        const shake = !shaking ? 0 : m.startle % 2 === 0 ? 1 : -1
+        return { ...base, x: base.x + shake, facing: 'front' as const, pose: 'stand' as const, emote: { kind: 'startle' as const } }
+      }
+      if (fading === null && m.idle >= DOZE_FRAMES) {
+        // T3: 目を閉じて正面を向き、「z」を上下させる
+        const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
+        return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
+      }
       if (fading === null) {
         return { ...base, facing: m.wanderer.facing, pose: poseOf(m.wanderer) }
       }
       return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
     })
+}
+
+/**
+ * id の 1 体に活動があった（ツールの呼び出しが始まった・終わった）。途切れを 0 に戻し、
+ * 失敗していればいる 1 体を驚かせる。id がいなければ何もしない（R10）。
+ */
+export function poke(crew: Crew, id: string, failed: boolean): Crew {
+  return crew.map(m =>
+    m.id !== id
+      ? m
+      : { ...m, idle: 0, startle: failed && m.presence.kind === 'here' ? STARTLE_FRAMES : m.startle },
+  )
 }

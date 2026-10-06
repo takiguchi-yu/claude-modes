@@ -13,6 +13,7 @@
 // 見張り（keepAlive）: タイマーは黙って終わることがある（$.clock.every は 1 回拒否されると終わる）。
 //   タイマーは 1 秒ごとに鼓動（lastBeat）を残す。帯の描き直しとツール呼び出しのたびに、
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
+// tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -20,7 +21,7 @@
 
 import type { AgentInfo, AgentStatus, EngineInterface, Register } from 'claude-code'
 
-import { actors, advance, assemble, type Crew, isVisible, join, setMain, sync } from './crew'
+import { actors, advance, assemble, type Crew, isVisible, join, MAIN, poke, setMain, sync } from './crew'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -58,10 +59,14 @@ export const register: Register = on => {
     return result
   })
 
-  // 見張りのきっかけ。ツールの呼び出しには手を出さない
-  on('tool.call', ($, e, next) => {
+  // 見張りのきっかけと、呼び出し元への活動の知らせ。ツールの呼び出しそのものには手を出さない
+  on('tool.call', async ($, e, next) => {
     keepAlive($).catch(() => undefined)
-    return next(e)
+    const id = e.agentId ?? MAIN
+    crew = poke(crew, id, false)
+    const result = await next(e)
+    crew = poke(crew, id, result.deny !== undefined || result.isError === true)
+    return result
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

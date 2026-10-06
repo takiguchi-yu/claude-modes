@@ -1,9 +1,9 @@
 import type { AgentInfo, AgentStatus, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actors, advance, agentCount, assemble, type Crew, isVisible, join, MAIN, MAX_AGENTS, setMain, sync } from '../hooks/crew'
+import { actors, advance, agentCount, assemble, type Crew, DOZE_FRAMES, isVisible, join, MAIN, MAX_AGENTS, poke, setMain, STARTLE_FRAMES, sync } from '../hooks/crew'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
-import { appear, elapse, FADE_FRAMES, GONE, HERE, retreat } from '../hooks/presence'
+import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 
@@ -143,7 +143,7 @@ test('浮かせると足が帯の下端から離れ、上端からはみ出す�
 test('どのマスコットも高さ 6・幅そろい・足が最下行にあり、歩くと絵が変わる', () => {
   for (const [id, mascot] of Object.entries(MASCOTS)) {
     for (const facing of ['left', 'front', 'right'] as const) {
-      for (const pose of ['stand', 'stepA', 'stepB'] as const) {
+      for (const pose of ['stand', 'stepA', 'stepB', 'sleep'] as const) {
         const bitmap = mascot.draw(facing, pose)
         expect({ id, rows: bitmap.length }).toEqual({ id, rows: MASCOT_HEIGHT })
         expect({ id, widths: [...new Set(bitmap.map(row => row.length))] }).toEqual({ id, widths: [mascot.width] })
@@ -341,13 +341,13 @@ test('R2・R11: 仲間は現れかけから始まり、種類・色・位置の�
   expect(two[2]!.wanderer.x).toBe(100 - MASCOTS[FRIENDS[1]!].width) // 右端ぴったりまで
 })
 
-test('R8・S8・S12・R10: いる仲間は外れると F コマかけて消え、消えきったら顔ぶれから外れる', () => {
+test('R8・S8\'・S12・R10: いる仲間は外れると跳ねてから F コマかけて消え、消えきったら顔ぶれから外れる', () => {
   let crew = sync(assemble(), ['a', 'b'], Math.random, 100)
   crew = advanceBy(crew, FADE_FRAMES) // 2 体ともいるになる
   crew = sync(crew, ['b'], Math.random, 100)
-  expect(crew.map(m => [m.id, m.presence.kind])).toEqual([[MAIN, 'gone'], ['a', 'leaving'], ['b', 'here']])
+  expect(crew.map(m => [m.id, m.presence.kind])).toEqual([[MAIN, 'gone'], ['a', 'leaping'], ['b', 'here']])
   const kept = crew[2]!
-  crew = advanceBy(crew, FADE_FRAMES)
+  crew = advanceBy(crew, LEAP_FRAMES + FADE_FRAMES)
   expect(crew.map(m => m.id)).toEqual([MAIN, 'b']) // 本体は外さない
   expect(crew[1]!.color).toBe(kept.color) // 残った仲間の色と種類は変わらない
   expect(crew[1]!.mascot).toBe(kept.mascot)
@@ -362,11 +362,11 @@ test('全種類がそろうまでは同じ種類が出ない', () => {
 
 test('起動の知らせで 1 体増え、ほかの仲間の状態はそのまま', () => {
   let crew = advanceBy(sync(assemble(), ['a', 'b'], () => 0, 100), FADE_FRAMES)
-  crew = sync(crew, ['b'], () => 0, 100) // a は消えかけ
+  crew = sync(crew, ['b'], () => 0, 100) // a は跳ねてから消える
   const joined = join(crew, 'c', () => 0.5, 100)
   expect(joined.map(m => [m.id, m.presence.kind])).toEqual([
     [MAIN, 'gone'],
-    ['a', 'leaving'],
+    ['a', 'leaping'],
     ['b', 'here'],
     ['c', 'arriving'],
   ])
@@ -423,14 +423,14 @@ test('R5・S5: 現れかけで引っ込めると、その濃さのまま消え�
 
 test('R6・S10: 消えかけで出し直すと、その濃さのまま現れ直す', () => {
   let crew = setMain(advanceBy(setMain(assemble(), true), FADE_FRAMES), false)
-  crew = advanceBy(crew, 4)
+  crew = advanceBy(crew, LEAP_FRAMES + 4)
   const before = actors(crew)[0]!.opacity!
   crew = setMain(crew, true)
   expect(crew[0]!.presence).toEqual({ kind: 'arriving', left: 4 })
   expect(Math.abs(actors(crew)[0]!.opacity! - before)).toBeLessThan(1e-9)
   // 仲間も同じ。一覧に戻っても、起動の知らせでも、濃さを飛ばさない
   let agents = setMain(advanceBy(sync(assemble(), ['a'], () => 0, 100), FADE_FRAMES), false)
-  agents = advanceBy(sync(agents, [], () => 0, 100), 5)
+  agents = advanceBy(sync(agents, [], () => 0, 100), LEAP_FRAMES + 5)
   expect(sync(agents, ['a'], () => 0, 100)[1]!.presence).toEqual({ kind: 'arriving', left: 5 })
   expect(join(agents, 'a', () => 0, 100)[1]!.presence).toEqual({ kind: 'arriving', left: 5 })
   // 消え始めた瞬間（濃さ 1）に出し直すと、そのままいる
@@ -439,12 +439,12 @@ test('R6・S10: 消えかけで出し直すと、その濃さのまま現れ直�
 
 test('R7・R12: 現れかけだけでも描くものがあり、全員いなくなると描かない', () => {
   expect(isVisible(setMain(assemble(), true))).toBe(true)
-  const crew = advanceBy(setMain(advanceBy(setMain(assemble(), true), FADE_FRAMES), false), FADE_FRAMES)
+  const crew = advanceBy(setMain(advanceBy(setMain(assemble(), true), FADE_FRAMES), false), LEAP_FRAMES + FADE_FRAMES)
   expect(isVisible(crew)).toBe(false)
   expect(actors(crew)).toHaveLength(0)
 })
 
-test('R8: 本体は作業が終わると浮き上がりながら薄くなって消え、顔ぶれには残る', () => {
+test('R8・emotes R1・S8\'・S15: 本体は作業が終わると跳ねてから、浮き上がりながら薄くなって消え、顔ぶれには残る', () => {
   let crew = setMain(advanceBy(setMain(assemble(), true), FADE_FRAMES), false)
   const opacities: number[] = []
   const lifts: number[] = []
@@ -454,9 +454,14 @@ test('R8: 本体は作業が終わると浮き上がりながら薄くなって�
     lifts.push(main!.lift!)
     crew = advanceBy(crew, 1)
   }
-  expect(opacities).toHaveLength(FADE_FRAMES)
-  expect(opacities[0]).toBe(1)
-  expect(opacities.every((o, i) => i === 0 || o < opacities[i - 1]!)).toBe(true)
+  expect(opacities).toHaveLength(LEAP_FRAMES + FADE_FRAMES)
+  // 跳ねる 4 コマ: 濃さ 1 のまま 1・2・2・1 ピクセル浮く
+  expect(opacities.slice(0, LEAP_FRAMES)).toEqual([1, 1, 1, 1])
+  expect(lifts.slice(0, LEAP_FRAMES)).toEqual([1, 2, 2, 1])
+  // そのあと F コマで薄くなりながら浮き上がる
+  const fading = opacities.slice(LEAP_FRAMES)
+  expect(fading[0]).toBe(1)
+  expect(fading.every((o, i) => i === 0 || o < fading[i - 1]!)).toBe(true)
   expect(lifts[lifts.length - 1]).toBeGreaterThan(0)
   expect(crew.map(m => m.id)).toEqual([MAIN]) // 本体は消えても残り、次の作業で同じ場所に戻る
 })
@@ -497,6 +502,144 @@ test('契約 actors: いない者は含まず、現れかけ・消えかけは�
       if (crew[0]!.presence.kind === 'here') break
     }
   }
+})
+
+// ---- 反応（.scratch/emotes/spec.md） --------------------------------------------
+
+/** 指定した位置で歩いている本体を、作業中にして「いる」まで進めたもの */
+const hereMain = (x = 50): Crew =>
+  advanceBy(
+    setMain([{ ...assemble()[0]!, wanderer: { x, facing: 'right', mode: 'walk', left: 1000, gait: 'walk', frame: 0 } }], true),
+    FADE_FRAMES,
+    200,
+  )
+
+/** 帯の行に、その文字（記号）が描かれているか */
+const hasChar = (lines: string[], char: string) => lines.some(line => line.includes(char))
+/** ピクセルの列 c が「!」（上 4 つ・1 つ空き・1 つ）で、その左の列が空いているか */
+const bangAt = (px: boolean[][], c: number) =>
+  [0, 1, 2, 3, 5].every(y => px[y]![c]) && !px[4]![c] && px.every(row => !row[c - 1])
+const hasBang = (px: boolean[][]) => px[0]!.some((_, c) => c > 0 && bangAt(px, c))
+
+test('R2・S13・S14: 跳ねている間に出し直すといるに戻り、引っ込めても変わらない', () => {
+  const leaping = setMain(hereMain(), false)
+  expect(leaping[0]!.presence).toEqual({ kind: 'leaping', left: LEAP_FRAMES })
+  expect(setMain(leaping, false)[0]!.presence).toEqual(leaping[0]!.presence)
+  expect(setMain(advanceBy(leaping, 2), true)[0]!.presence).toEqual(HERE)
+})
+
+test('R3・R4・T2: 失敗すると 2 秒驚き、その間は歩かずに「!」を出す。震えるのは最初の 8 コマだけ', () => {
+  let crew = poke(hereMain(), MAIN, true)
+  expect(crew[0]!.startle).toBe(20)
+  for (let i = 0; i < STARTLE_FRAMES; i += 1) {
+    const actor = actors(crew)[0]!
+    expect(actor.emote).toEqual({ kind: 'startle' })
+    expect(Math.abs(actor.x - 50)).toBe(i < 8 ? 1 : 0)
+    crew = advanceBy(crew, 1, 200)
+    expect(crew[0]!.wanderer.x).toBe(50)
+  }
+  expect(actors(crew)[0]!.emote).toBeUndefined()
+  crew = advanceBy(crew, 1, 200)
+  expect(crew[0]!.wanderer.x).toBe(51) // 驚き終わると、また歩く（T4）
+})
+
+test('R5・T3: 活動が 20 秒途切れると居眠りし、小さな寝姿で「Z」が上下する', () => {
+  let crew = advanceBy(hereMain(), DOZE_FRAMES - 1, 200)
+  expect(actors(crew)[0]!.emote).toBeUndefined()
+  crew = advanceBy(crew, 1, 200)
+  const x = crew[0]!.wanderer.x
+  const highs = new Set<boolean>()
+  for (let i = 0; i < 20; i += 1) {
+    const actor = actors(crew)[0]!
+    expect(actor).toMatchObject({ facing: 'front', pose: 'sleep', emote: { kind: 'doze' } })
+    highs.add((actor.emote as { high: boolean }).high)
+    crew = advanceBy(crew, 1, 200)
+    expect(crew[0]!.wanderer.x).toBe(x)
+  }
+  expect(highs).toEqual(new Set([true, false]))
+  // 寝姿: 高さ 4（上 2 行は空き）、幅は元の 8 割以下、足元は下端、左右は中央
+  const litColumns = (bitmap: boolean[][]) => bitmap[0]!.map((_, x) => bitmap.some(row => row[x])).flatMap((on, x) => (on ? [x] : []))
+  for (const [id, mascot] of Object.entries(MASCOTS)) {
+    const sleep = mascot.draw('front', 'sleep')
+    const cols = litColumns(sleep)
+    expect({ id, top: sleep.slice(0, 2).some(row => row.some(Boolean)) }).toEqual({ id, top: false })
+    expect({ id, feet: sleep[5]!.some(Boolean) }).toEqual({ id, feet: true })
+    const span = cols[cols.length - 1]! - cols[0]! + 1
+    expect({ id, small: span <= mascot.width * 0.8 }).toEqual({ id, small: true })
+    const center = (cols[0]! + cols[cols.length - 1]!) / 2
+    expect({ id, centered: Math.abs(center - (mascot.width - 1) / 2) <= 1 }).toEqual({ id, centered: true })
+  }
+})
+
+test('R6: 活動があると居眠りから起きる', () => {
+  const dozing = advanceBy(hereMain(), DOZE_FRAMES, 200)
+  const awake = poke(dozing, MAIN, false)
+  expect(awake[0]!.idle).toBe(0)
+  expect(actors(awake)[0]!.emote).toBeUndefined()
+})
+
+test('R7: 居眠り中に失敗すると、驚きを描く', () => {
+  const dozing = advanceBy(hereMain(), DOZE_FRAMES, 200)
+  expect(actors(poke(dozing, MAIN, true))[0]!.emote).toEqual({ kind: 'startle' })
+})
+
+test('R8・T1: 出入りの途中は驚きも居眠りも描かない', () => {
+  const arriving = setMain(assemble(), true)
+  expect(poke(arriving, MAIN, true)[0]!.startle).toBe(0)
+  expect(actors(poke(arriving, MAIN, true))[0]!.emote).toBeUndefined()
+  let leaving = setMain(advanceBy(hereMain(), DOZE_FRAMES, 200), false)
+  for (let i = 0; i < LEAP_FRAMES + FADE_FRAMES - 1; i += 1) {
+    expect(actors(leaving)[0]!.emote).toBeUndefined()
+    leaving = advanceBy(leaving, 1, 200)
+  }
+})
+
+test('R10: 顔ぶれにいない id の失敗では、誰も驚かない', () => {
+  const crew = hereMain()
+  expect(poke(crew, 'nobody', true)).toEqual(crew)
+})
+
+test('契約 Actor.emote: 記号は絵の右端の塗りから 1 ピクセル以上空けて描き（! はドット絵、zZ は文字）、帯からはみ出さない', () => {
+  const rightEdge = (bitmap: boolean[][]) => Math.max(...bitmap.map(row => row.lastIndexOf(true)))
+  const columnAfter = (x: number, bitmap: boolean[][]) => Math.ceil((x + rightEdge(bitmap) + 2) / 2)
+  const charAt = (lines: string[], row: number, col: number) => [...lines[row]!][col]
+  // 驚き: 絵の右端の塗りから 1 ピクセル空けて、ドット絵の「!」
+  const stand = MASCOTS.clawd.draw('front', 'stand')
+  const bang = pixels(decode(paint([clawd(0, { emote: { kind: 'startle' } })], 11), 11).lines)
+  expect(bangAt(bang, rightEdge(stand) + 2)).toBe(true)
+  // 居眠り: 「z」とその右上に「Z」。high で 1 行上。絵の塗りとは重ならない（位置が奇数でも偶数でも）
+  const sleep = MASCOTS.clawd.draw('front', 'sleep')
+  for (const x of [0, 1]) {
+    const col = columnAfter(x, sleep)
+    expect(col * 2).toBeGreaterThan(x + rightEdge(sleep))
+    const dozing = (high: boolean) => decode(paint([clawd(x, { pose: 'sleep', emote: { kind: 'doze', high } })], 13), 13).lines
+    const high = dozing(true)
+    const low = dozing(false)
+    expect([charAt(high, 1, col), charAt(high, 0, col + 1)]).toEqual(['z', 'Z'])
+    expect([charAt(low, 2, col), charAt(low, 1, col + 1)]).toEqual(['z', 'Z'])
+  }
+  // 帯の右端では記号は描かれないだけで、行の長さは変わらない
+  const edge = decode(paint([clawd(2, { emote: { kind: 'startle' } })], 10), 10)
+  expect(edge.lines.every(line => [...line].length === 10)).toBe(true)
+})
+
+test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ deny: 'refused by the test' }) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  expect(hasBang(pixels(decode(frames[frames.length - 1]!, 40).lines))).toBe(false)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await clock.advance(200)
+  expect(hasBang(pixels(decode(frames[frames.length - 1]!, 40).lines))).toBe(true)
+  await ui.unmount()
 })
 
 // ---- 帯への描画 ---------------------------------------------------------------
@@ -566,7 +709,7 @@ test('サブエージェントが動いている間は色違いが増え、本�
   // 本体の作業が終わっても、サブエージェントが動いていれば帯に残る（本体は消える）
   await ui.redraw(bandProps(false, 40))
   expect(await ui.find({ key: 'clawd' })).toBeDefined()
-  await clock.advance(1500)
+  await clock.advance(2000) // 跳ねる 0.4 秒 + 消える 1.2 秒
   expect(colorsNow().has(ORANGE)).toBe(false)
   expect(colorsNow().has(BLUE)).toBe(true)
 
