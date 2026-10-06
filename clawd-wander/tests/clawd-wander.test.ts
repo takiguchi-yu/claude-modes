@@ -235,17 +235,17 @@ test('S1: 速さどおりに進む（ゆっくりは 2 コマで 1、ふつう�
 
 test('R1・R2: 歩き始めの距離と速さ', () => {
   // 乱数は「遠くまで行くか」「距離」「速さ」の順に使う
-  expect(setOff(0, 'right', seq(0, 0, 0), 0)).toMatchObject({ mode: 'walk', left: 3, gait: 'stroll' })
-  expect(setOff(0, 'right', seq(0.84, 0.999, 0.5), 0)).toMatchObject({ left: 14, gait: 'walk' })
-  expect(setOff(0, 'right', seq(0.85, 0, 0.9), 0)).toMatchObject({ left: 20, gait: 'dash' })
-  expect(setOff(0, 'right', seq(0.99, 0.999, 0.99), 0)).toMatchObject({ left: 50, gait: 'dash' })
-  // 長い試行で比率を確かめる（遠くまで 15%・小走り 10%）
+  expect(setOff(0, 'right', seq(0, 0, 0), 0)).toMatchObject({ mode: 'walk', left: 8, gait: 'stroll' })
+  expect(setOff(0, 'right', seq(0.74, 0.999, 0.5), 0)).toMatchObject({ left: 24, gait: 'walk' })
+  expect(setOff(0, 'right', seq(0.75, 0, 0.9), 0)).toMatchObject({ left: 30, gait: 'dash' })
+  expect(setOff(0, 'right', seq(0.99, 0.999, 0.99), 0)).toMatchObject({ left: 80, gait: 'dash' })
+  // 長い試行で比率を確かめる（遠くまで 25%・小走り 10%）
   const random = lcg(11)
   const starts = Array.from({ length: 4000 }, () => setOff(0, 'right', random, 0))
-  const far = starts.filter(w => w.left >= 20).length / starts.length
+  const far = starts.filter(w => w.left >= 30).length / starts.length
   const dash = starts.filter(w => w.gait === 'dash').length / starts.length
   const stroll = starts.filter(w => w.gait === 'stroll').length / starts.length
-  expect(Math.abs(far - 0.15)).toBeLessThan(0.03)
+  expect(Math.abs(far - 0.25)).toBeLessThan(0.03)
   expect(Math.abs(dash - 0.1)).toBeLessThan(0.03)
   expect(Math.abs(stroll - 0.35)).toBeLessThan(0.03)
 })
@@ -288,8 +288,8 @@ test('R7: 脚は 2 ピクセルごとに入れ替わり、止まっている間�
   expect(poseOf(walker({ mode: 'rest' }))).toBe('stand')
 })
 
-test('R8: 向きを変えるまでに歩く距離は、平均で 20 ピクセル以下', () => {
-  const trail = wanderFor(50000, 300)
+test('R8: 向きを変えるまでに歩く距離は、平均で 25〜50 ピクセル', () => {
+  const trail = wanderFor(50000, 600)
   const runs: number[] = []
   let run = 0
   let heading: 'left' | 'right' | null = null
@@ -306,7 +306,8 @@ test('R8: 向きを変えるまでに歩く距離は、平均で 20 ピクセル
   }
   const mean = runs.reduce((a, b) => a + b, 0) / runs.length
   expect(runs.length).toBeGreaterThan(500)
-  expect(mean).toBeLessThanOrEqual(20)
+  expect(mean).toBeGreaterThanOrEqual(25)
+  expect(mean).toBeLessThanOrEqual(50)
 })
 
 test('R9・R13・S3: 端を越えるときは位置を変えずに反転し、残り距離が 1 減る', () => {

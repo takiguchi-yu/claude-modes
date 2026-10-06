@@ -40,8 +40,8 @@ const pace = (gait: Gait, frame: number) => (gait === 'dash' ? 2 : gait === 'wal
  * 歩き出す（R1・R2）。乱数は「遠くまで行くか」「距離」「速さ」の順に使う。
  */
 export function setOff(x: number, facing: Facing, random: () => number, frame: number): Wanderer {
-  const isFar = random() >= 0.85
-  const left = isFar ? between(random, 20, 50) : between(random, 3, 14)
+  const isFar = random() >= 0.75
+  const left = isFar ? between(random, 30, 80) : between(random, 8, 24)
   const g = random()
   const gait: Gait = g < 0.35 ? 'stroll' : g < 0.9 ? 'walk' : 'dash'
   return { x, facing, mode: 'walk', left, gait, frame }
