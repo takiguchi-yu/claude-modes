@@ -1053,3 +1053,51 @@ test('R7: 驚いている仲間は進まず、驚き終えると追いつく', (
   expect(crew[0]!.parade).not.toBeNull()
   expect(crew[1]!.wanderer.x).toBe(crew[0]!.wanderer.x - offsets(crew)[0]!)
 })
+
+// ---- 重なり（.scratch/overlap/spec.md） ---------------------------------------
+
+/** 帯の幅 width ピクセルに、actor の絵を置いたビットマップ */
+const placed = (actor: Actor, width: number): boolean[][] => {
+  const bitmap = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
+  return Array.from({ length: MASCOT_HEIGHT }, (_, y) => Array.from({ length: width }, (_, x) => bitmap[y]![x - actor.x] ?? false))
+}
+
+/** front の塗りから 1 ピクセル以内（斜めを含む）か */
+const near = (front: boolean[][], x: number, y: number) =>
+  [-1, 0, 1].some(dy => [-1, 0, 1].some(dx => front[y + dy]?.[x + dx] === true))
+
+/** back の上に front を描いたときに期待する絵: front の塗りと、front から 2 ピクセル以上離れた back の塗り */
+const knockedOut = (back: boolean[][], front: boolean[][]) =>
+  back.map((row, y) => row.map((on, x) => front[y]![x]! || (on && !near(front, x, y))))
+
+test('R1・R2: 仲間が本体に重なると、仲間の塗りから 1 ドット以内の本体のドットが消え、それ以外は残る。後に描いた者が手前', () => {
+  const back = clawd(0)
+  const front = clawd(12, { mascot: 'ghost', color: BLUE })
+  const b = placed(back, 32)
+  const f = placed(front, 32)
+  expect(pixels(decode(paint([back, front], 16), 16).lines)).toEqual(knockedOut(b, f))
+  // 描く順を入れ替えると、消える側も入れ替わる
+  expect(pixels(decode(paint([front, back], 16), 16).lines)).toEqual(knockedOut(f, b))
+})
+
+test('R3: 手前が薄くなっている途中なら、奥のドットは消えない', () => {
+  const back = clawd(0)
+  const drawn = pixels(decode(paint([back, clawd(12, { mascot: 'ghost', color: BLUE, opacity: 0.5 })], 16), 16).lines)
+  placed(back, 32).forEach((row, y) => row.forEach((on, x) => on && expect({ x, y, lit: drawn[y]![x] }).toEqual({ x, y, lit: true })))
+})
+
+test('R4: 濃さ 1 の 2 体が重なっても、どのマスにも 2 体のドットが入らない（どの位置でも）', () => {
+  for (let x = 2; x <= 20; x += 1) {
+    const front = clawd(x, { mascot: 'ghost', color: BLUE })
+    const drawn = pixels(decode(paint([clawd(0), front], 16), 16).lines)
+    const f = placed(front, 32)
+    for (let cy = 0; cy < MASCOT_HEIGHT; cy += 2) {
+      for (let cx = 0; cx < 32; cx += 2) {
+        const cell = [[cy, cx], [cy, cx + 1], [cy + 1, cx], [cy + 1, cx + 1]] as const
+        const hasFront = cell.some(([y, px]) => f[y]![px])
+        const hasBack = cell.some(([y, px]) => drawn[y]![px] && !f[y]![px])
+        expect({ x, cx, cy, mixed: hasFront && hasBack }).toEqual({ x, cx, cy, mixed: false })
+      }
+    }
+  }
+})

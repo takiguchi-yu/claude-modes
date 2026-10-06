@@ -63,6 +63,8 @@ const keeps = (dx: number, y: number, opacity: number) => (BAYER[y % 4]![dx % 4]
 /**
  * 幅 `columns` セル × SPRITE_ROWS 行の Raster の cells を作る。
  * 後ろの Actor ほど手前に描き、帯からはみ出す分は切る。
+ * 濃さ 1 の Actor は、その塗りから 1 ピクセル以内にある先の Actor のピクセルを消してから描く
+ * （重なっても輪郭が切り離されて見分けられる。.scratch/overlap/spec.md）。
  * 1 セルに 2 色が重なったときは、そのセルで多いほうの色にする（同数なら手前）。
  */
 export function paint(actors: readonly Actor[], columns: number): string {
@@ -70,9 +72,13 @@ export function paint(actors: readonly Actor[], columns: number): string {
   const height = SPRITE_ROWS * 2
   // 各ピクセルの色。-1 は空き
   const canvas = new Int32Array(width * height).fill(-1)
+  // 各ピクセルを描いた Actor の番号。-1 は空き
+  const owner = new Int32Array(width * height).fill(-1)
   // マスに直接置く文字（記号）。ピクセルの絵より手前に描く
   const texts: { col: number; row: number; char: string; color: number }[] = []
-  for (const actor of actors) {
+  actors.forEach((actor, index) => {
+    // この Actor が塗るピクセル（canvas の添字）
+    const dots: number[] = []
     const opacity = actor.opacity ?? 1
     const lift = actor.lift ?? 0
     const bitmap = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
@@ -82,7 +88,7 @@ export function paint(actors: readonly Actor[], columns: number): string {
         const y = sy - lift
         if (!on || x < 0 || x >= width || y < 0 || y >= height) return
         if (opacity < 1 && !keeps(dx, sy, opacity)) return
-        canvas[y * width + x] = actor.color
+        dots.push(y * width + x)
       }),
     )
     if (actor.prop !== undefined) {
@@ -97,7 +103,7 @@ export function paint(actors: readonly Actor[], columns: number): string {
         row.forEach((on, tx) => {
           const x = left + tx
           const y = ty + dy
-          if (on && x >= 0 && x < width && y >= 0 && y < height) canvas[y * width + x] = actor.color
+          if (on && x >= 0 && x < width && y >= 0 && y < height) dots.push(y * width + x)
         }),
       )
     }
@@ -107,7 +113,7 @@ export function paint(actors: readonly Actor[], columns: number): string {
       const left = actor.x + right + 2
       if (actor.emote.kind === 'startle') {
         BANG.forEach((c, y) => {
-          if (c === '#' && left >= 0 && left < width) canvas[y * width + left] = actor.color
+          if (c === '#' && left >= 0 && left < width) dots.push(y * width + left)
         })
       } else {
         const column = Math.ceil(left / 2)
@@ -116,7 +122,28 @@ export function paint(actors: readonly Actor[], columns: number): string {
         }
       }
     }
-  }
+    if (opacity >= 1) {
+      // R1: 塗りから 1 ピクセル以内（斜めを含む）にある、先の Actor のピクセルを消す。
+      // 薄くなっている途中の Actor は、まばらな塗りで奥に穴を開けないよう消さない（R3）
+      for (const dot of dots) {
+        const x = dot % width
+        const y = (dot - x) / width
+        for (let ny = Math.max(0, y - 1); ny <= Math.min(height - 1, y + 1); ny += 1) {
+          for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
+            const near = ny * width + nx
+            if (owner[near]! >= 0 && owner[near] !== index) {
+              canvas[near] = -1
+              owner[near] = -1
+            }
+          }
+        }
+      }
+    }
+    for (const dot of dots) {
+      canvas[dot] = actor.color
+      owner[dot] = index
+    }
+  })
 
   const words = new Uint32Array(columns * SPRITE_ROWS * 3)
   for (let row = 0; row < SPRITE_ROWS; row += 1) {
