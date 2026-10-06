@@ -36,8 +36,8 @@ export type Member = {
   readonly prop: { readonly kind: PropId; readonly left: number } | null
 }
 
-/** 活動がこのコマ数途切れたら居眠りする（20 秒） */
-export const DOZE_FRAMES = 200
+/** 活動がこのコマ数途切れたら居眠りする（60 秒） */
+export const DOZE_FRAMES = 600
 /** 驚いているコマ数（2 秒）。最初の SHAKE_FRAMES コマだけ震える */
 export const STARTLE_FRAMES = 20
 const SHAKE_FRAMES = 8

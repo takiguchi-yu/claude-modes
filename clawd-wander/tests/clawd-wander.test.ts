@@ -197,14 +197,14 @@ function wanderFor(frames: number, maxX: number, seed = 7): Wanderer[] {
   return trail
 }
 
-test('R10・S1・契約 step: 帯の中に収まり、1 コマの移動は 2 ピクセル以内で、左右どちらにも動く', () => {
+test('R10・S1・契約 step: 帯の中に収まり、1 コマの移動は 3 ピクセル以内で、左右どちらにも動く', () => {
   const maxX = 60
   const trail = wanderFor(20000, maxX)
   let previous = start()
   for (const w of trail) {
     expect(w.x).toBeGreaterThanOrEqual(0)
     expect(w.x).toBeLessThanOrEqual(maxX)
-    expect(Math.abs(w.x - previous.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(w.x - previous.x)).toBeLessThanOrEqual(3)
     expect(['walk', 'pause', 'rest']).toContain(w.mode)
     expect(w.left).toBeGreaterThanOrEqual(1)
     previous = w
@@ -223,38 +223,38 @@ test('R11: maxX が負なら 0 とみなす', () => {
   expect(step(walker({ x: 5 }), -10, () => 0.5).x).toBe(0)
 })
 
-test('S1: 速さどおりに進む（ゆっくりは 2 コマで 1、ふつうは 1、小走りは 2 ピクセル）', () => {
+test('S1: 速さどおりに進む（1 コマで、ゆっくりは 1、ふつうは 2、小走りは 3 ピクセル）', () => {
   const moved = (gait: Wanderer['gait']) => {
     let w = walker({ gait, left: 40 })
     for (let i = 0; i < 10; i += 1) w = step(w, 200, () => 0.5)
     return w.x - 50
   }
-  expect(moved('stroll')).toBe(5)
-  expect(moved('walk')).toBe(10)
-  expect(moved('dash')).toBe(20)
+  expect(moved('stroll')).toBe(10)
+  expect(moved('walk')).toBe(20)
+  expect(moved('dash')).toBe(30)
 })
 
 test('R1・R2: 歩き始めの距離と速さ', () => {
   // 乱数は「遠くまで行くか」「距離」「速さ」の順に使う
   expect(setOff(0, 'right', seq(0, 0, 0), 0)).toMatchObject({ mode: 'walk', left: 8, gait: 'stroll' })
-  expect(setOff(0, 'right', seq(0.74, 0.999, 0.5), 0)).toMatchObject({ left: 24, gait: 'walk' })
-  expect(setOff(0, 'right', seq(0.75, 0, 0.9), 0)).toMatchObject({ left: 30, gait: 'dash' })
-  expect(setOff(0, 'right', seq(0.99, 0.999, 0.99), 0)).toMatchObject({ left: 80, gait: 'dash' })
-  // 長い試行で比率を確かめる（遠くまで 25%・小走り 10%）
+  expect(setOff(0, 'right', seq(0.49, 0.999, 0.74), 0)).toMatchObject({ left: 24, gait: 'walk' })
+  expect(setOff(0, 'right', seq(0.5, 0, 0.75), 0)).toMatchObject({ left: 40, gait: 'dash' })
+  expect(setOff(0, 'right', seq(0.99, 0.999, 0.99), 0)).toMatchObject({ left: 160, gait: 'dash' })
+  // 長い試行で比率を確かめる（遠くまで 50%・小走り 25%・ゆっくり 15%）
   const random = lcg(11)
   const starts = Array.from({ length: 4000 }, () => setOff(0, 'right', random, 0))
-  const far = starts.filter(w => w.left >= 30).length / starts.length
+  const far = starts.filter(w => w.left >= 40).length / starts.length
   const dash = starts.filter(w => w.gait === 'dash').length / starts.length
   const stroll = starts.filter(w => w.gait === 'stroll').length / starts.length
-  expect(Math.abs(far - 0.25)).toBeLessThan(0.03)
-  expect(Math.abs(dash - 0.1)).toBeLessThan(0.03)
-  expect(Math.abs(stroll - 0.35)).toBeLessThan(0.03)
+  expect(Math.abs(far - 0.5)).toBeLessThan(0.03)
+  expect(Math.abs(dash - 0.25)).toBeLessThan(0.03)
+  expect(Math.abs(stroll - 0.15)).toBeLessThan(0.03)
 })
 
 test('R3・S2: 歩き終えたら、振り返ってすぐ歩く・立ち止まる・休むのどれか', () => {
   const finish = (...values: number[]) => step(walker({ left: 1 }), 200, seq(...values))
   const back = finish(0.2, 0, 0, 0.5)
-  expect(back).toMatchObject({ mode: 'walk', facing: 'left', x: 51 })
+  expect(back).toMatchObject({ mode: 'walk', facing: 'left', x: 52 })
   expect(finish(0.6, 0.5)).toMatchObject({ mode: 'pause', left: 4, facing: 'right' })
   expect(finish(0.9, 0.5)).toMatchObject({ mode: 'rest', left: 20 })
 })
@@ -289,7 +289,7 @@ test('R7: 脚は 2 ピクセルごとに入れ替わり、止まっている間�
   expect(poseOf(walker({ mode: 'rest' }))).toBe('stand')
 })
 
-test('R8: 向きを変えるまでに歩く距離は、平均で 25〜50 ピクセル', () => {
+test('R8: 向きを変えるまでに歩く距離は、幅 600 ピクセルの帯で平均 55〜100 ピクセル', () => {
   const trail = wanderFor(50000, 600)
   const runs: number[] = []
   let run = 0
@@ -307,8 +307,8 @@ test('R8: 向きを変えるまでに歩く距離は、平均で 25〜50 ピク�
   }
   const mean = runs.reduce((a, b) => a + b, 0) / runs.length
   expect(runs.length).toBeGreaterThan(500)
-  expect(mean).toBeGreaterThanOrEqual(25)
-  expect(mean).toBeLessThanOrEqual(50)
+  expect(mean).toBeGreaterThanOrEqual(55)
+  expect(mean).toBeLessThanOrEqual(100)
 })
 
 test('R9・R13・S3: 端を越えるときは位置を変えずに反転し、残り距離が 1 減る', () => {
@@ -409,7 +409,7 @@ test('R3・R4・R9・S9: 現れかけの間は歩かず、いるになった次�
   }
   expect(crew[0]!.presence).toEqual(HERE)
   crew = advanceBy(crew, 1, 200)
-  expect(crew[0]!.wanderer.x).toBe(51)
+  expect(crew[0]!.wanderer.x).toBe(52)
 })
 
 test('R5・S5: 現れかけで引っ込めると、その濃さのまま消え始める', () => {
@@ -541,10 +541,10 @@ test('R3・R4・T2: 失敗すると 2 秒驚き、その間は歩かずに「!�
   }
   expect(actors(crew)[0]!.emote).toBeUndefined()
   crew = advanceBy(crew, 1, 200)
-  expect(crew[0]!.wanderer.x).toBe(51) // 驚き終わると、また歩く（T4）
+  expect(crew[0]!.wanderer.x).toBe(52) // 驚き終わると、また歩く（T4）
 })
 
-test('R5・T3: 活動が 20 秒途切れると居眠りし、小さな寝姿で「Z」が上下する', () => {
+test('R5・T3: 活動が 60 秒途切れると居眠りし、小さな寝姿で「Z」が上下する', () => {
   let crew = advanceBy(hereMain(), DOZE_FRAMES - 1, 200)
   expect(actors(crew)[0]!.emote).toBeUndefined()
   crew = advanceBy(crew, 1, 200)

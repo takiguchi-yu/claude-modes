@@ -1,13 +1,13 @@
 // うろうろする動き。1 コマ（TICK_MS）ごとに step で次の状態を返す純粋関数。
 //
 // 短い距離を行ったり来たりする。歩き終えたら、振り返ってすぐ引き返すか、少し立ち止まるか、
-// きょろきょろしながら休む。速さはゆっくり・ふつう・小走りの 3 段。ときどき遠くまで歩く。
+// きょろきょろしながら休む。速さはゆっくり・ふつう・小走りの 3 段。半分は遠くまで歩く。
 // 端に着いたら引き返す。描画も Claude Code の API も知らない。
 // 仕様は .scratch/wander/spec.md（状態遷移表 S1〜S9）。
 
 import type { Facing, Pose } from './mascots'
 
-/** 歩く速さ。stroll は 2 コマで 1 ピクセル、walk は 1 コマで 1 ピクセル、dash は 1 コマで 2 ピクセル */
+/** 歩く速さ。stroll は 1 コマで 1 ピクセル、walk は 2 ピクセル、dash は 3 ピクセル */
 export type Gait = 'stroll' | 'walk' | 'dash'
 
 export type Wanderer = {
@@ -19,7 +19,7 @@ export type Wanderer = {
   readonly left: number
   /** walk の速さ。pause・rest では使わない */
   readonly gait: Gait
-  /** 経過コマ数。ゆっくり歩くときの拍に使う */
+  /** 経過コマ数 */
   readonly frame: number
 }
 
@@ -33,17 +33,17 @@ const between = (random: () => number, min: number, max: number) => min + Math.f
 
 const turned = (facing: Facing): Facing => (facing === 'left' ? 'right' : 'left')
 
-/** このコマに進むピクセル数 */
-const pace = (gait: Gait, frame: number) => (gait === 'dash' ? 2 : gait === 'walk' ? 1 : frame % 2)
+/** 1 コマに進むピクセル数（R2） */
+const PACE: Record<Gait, number> = { stroll: 1, walk: 2, dash: 3 }
 
 /**
  * 歩き出す（R1・R2）。乱数は「遠くまで行くか」「距離」「速さ」の順に使う。
  */
 export function setOff(x: number, facing: Facing, random: () => number, frame: number): Wanderer {
-  const isFar = random() >= 0.75
-  const left = isFar ? between(random, 30, 80) : between(random, 8, 24)
+  const isFar = random() >= 0.5
+  const left = isFar ? between(random, 40, 160) : between(random, 8, 24)
   const g = random()
-  const gait: Gait = g < 0.35 ? 'stroll' : g < 0.9 ? 'walk' : 'dash'
+  const gait: Gait = g < 0.15 ? 'stroll' : g < 0.75 ? 'walk' : 'dash'
   return { x, facing, mode: 'walk', left, gait, frame }
 }
 
@@ -66,10 +66,7 @@ export function step(w: Wanderer, maxX: number, random: () => number): Wanderer 
 
   switch (w.mode) {
     case 'walk': {
-      const dx = (w.facing === 'left' ? -1 : 1) * pace(w.gait, frame)
-      if (dx === 0) {
-        return { ...w, x, frame } // ゆっくり歩きの、足を止める拍
-      }
+      const dx = (w.facing === 'left' ? -1 : 1) * PACE[w.gait]
       const next = x + dx
       if (next < 0 || next > limit) {
         // S3: 位置はそのまま向きを反転し、残り距離を 1 減らす
