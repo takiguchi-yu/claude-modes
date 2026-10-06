@@ -1,0 +1,16 @@
+{
+  "name": "local-mods",
+  "owner": {
+    "name": "local"
+  },
+  "metadata": {
+    "description": "Claude Code mods kept on this machine."
+  },
+  "plugins": [
+    {
+      "name": "clawd-wander",
+      "source": "./clawd-wander",
+      "description": "While Claude works, Clawd and a friend per subagent wander in the band above the prompt."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "clawd-wander",
+  "version": "0.1.0",
+  "description": "While Claude works, Clawd wanders back and forth in the band above the prompt.",
+  "dependencies": [
+    "replay-theater@claude-code-playground-mods"
+  ]
+}

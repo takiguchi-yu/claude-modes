@@ -1,0 +1,4 @@
+# Claude Code が mod を読み込むときに置く型定義と tsconfig
+**/.claude-plugin/types/
+/*/tsconfig.json
+.DS_Store
