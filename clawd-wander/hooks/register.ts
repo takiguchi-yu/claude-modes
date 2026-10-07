@@ -14,7 +14,8 @@
 //   タイマーは 1 秒ごとに鼓動（lastBeat）を残す。帯の描き直しとツール呼び出しのたびに、
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
 // tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
-//   編集系のツールならハンマー、調べる系なら虫めがねを持たせる（.scratch/props/spec.md）。
+//   編集系のツールならハンマー、調べる系なら虫めがね、Write は鉛筆、Agent は旗、待ちを始めるツールは砂時計、
+//   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒持たせる（.scratch/props/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
@@ -23,7 +24,22 @@
 
 import type { AgentInfo, AgentStatus, EngineInterface, Register } from 'claude-code'
 
-import { actors, advance, assemble, type Crew, isVisible, join, lineUp, MAIN, poke, setMain, sync, wield } from './crew'
+import {
+  actors,
+  advance,
+  assemble,
+  type Crew,
+  hasFriends,
+  isVisible,
+  join,
+  lineUp,
+  MAIN,
+  poke,
+  release,
+  setMain,
+  sync,
+  wield,
+} from './crew'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -48,6 +64,8 @@ let misses = 0
 let ticks = 0
 /** タイマーが最後に鼓動した時刻（POLL_TICKS コマごとに残す） */
 let lastBeat = 0
+/** 最後に受け取った「Claude が作業中か」。仲間の一覧を見直したときに本体の出入りを決めるのに使う */
+let lastWorking = false
 /** 最後に描いた帯の幅（ピクセル）。新しい仲間の出現位置を決めるのに使う */
 let lastCanvas = 0
 
@@ -65,16 +83,34 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     keepAlive($).catch(() => undefined)
     const id = e.agentId ?? MAIN
-    crew = wield(poke(crew, id, false), id, e.tool)
-    const result = await next(e)
-    crew = wield(poke(crew, id, result.deny !== undefined || result.isError === true), id, e.tool)
-    return result
+    // Bash はコマンドの中身で道具を決める（テストを走らせるならフラスコ。props の R20）
+    const command = e.tool === 'Bash' ? e.command : undefined
+    crew = wield(poke(crew, id, false), id, e.tool, command)
+    // 1 つの呼び出しは 1 回だけ使い終える。中断されたらその時点で（props の R16）、例外で抜けても（R13）
+    let ended = false
+    const end = () => {
+      if (ended) return
+      ended = true
+      crew = release(crew, id, e.tool, command)
+    }
+    next.signal.addEventListener('abort', end, { once: true })
+    // 付けた時点で中断済みなら、abort はもう届かない
+    if (next.signal.aborted) end()
+    try {
+      const result = await next(e)
+      crew = poke(crew, id, result.deny !== undefined || result.isError === true)
+      return result
+    } finally {
+      end()
+    }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const ui = $.ui.resolve(e)
     const { isWorking, hasSurvey, bodyColumns } = e.props
-    crew = setMain(crew, isWorking)
+    lastWorking = isWorking
+    // 本体は、Claude が作業中か、サブエージェントが動いている間だけ出す（.scratch/always/spec.md）
+    crew = setMain(crew, isWorking || hasFriends(crew))
     if (!isVisible(crew) || hasSurvey || !('Raster' in ui) || bodyColumns * 2 < WIDEST) {
       stage = null
       return next(e)
@@ -155,6 +191,8 @@ function refresh($: EngineInterface, list: readonly AgentInfo[]) {
     Math.random,
     lastCanvas,
   )
+  // 仲間がいなくなって Claude も作業していなければ、本体も消え始める
+  crew = setMain(crew, lastWorking || hasFriends(crew))
   if (isVisible(crew) !== wasVisible) {
     $.ui.invalidate('ui.render')
   }

@@ -13,15 +13,17 @@ import {
   lineUp,
   MAIN,
   MAX_AGENTS,
+  type Member,
   PARADE_CHANCE,
   poke,
+  release,
   setMain,
   STARTLE_FRAMES,
   sync,
   wield,
 } from '../hooks/crew'
 import { begin, record, slot, TRAIL } from '../hooks/parade'
-import { PROP_FRAMES, propFor } from '../hooks/props'
+import { decay, grab, PROP_FRAMES, PROP_GAP, propBitmap, propFor, propPixels, reach, relax, runsTests } from '../hooks/props'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
@@ -91,6 +93,17 @@ function decode(cells: string, columns: number) {
     lines.push(line)
   }
   return { lines, colors }
+}
+
+/** cells に使われている色（文字の色と背景の色。端末の既定の色を除く） */
+function cellColors(cells: string): Set<number> {
+  const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+  const used = new Set<number>()
+  for (let at = 0; at < words.length; at += 3) {
+    if (words[at] === 0x20) continue
+    for (const color of [words[at + 1]!, words[at + 2]!]) if (color !== 0x01000000) used.add(color)
+  }
+  return used
 }
 
 /** 象限ブロック文字の行を、ピクセルの行（1 文字 = 横 2 × 縦 2）に戻す */
@@ -666,31 +679,189 @@ test('register: ツールの呼び出しが失敗すると、本体が「!」を
 
 const litCount = (lines: string[]) => pixels(lines).flat().filter(Boolean).length
 
-test('契約 propFor・R1・R2・R3: 編集系はハンマー、調べる系は虫めがね、それ以外は無し', () => {
-  for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(propFor(tool)).toBe('hammer')
+test('契約 propFor・R1・R2・R3・R17〜R20: ツール名（と Bash のコマンド）から道具を決める', () => {
+  for (const tool of ['Edit', 'MultiEdit', 'NotebookEdit']) expect(propFor(tool)).toBe('hammer')
   for (const tool of ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch']) expect(propFor(tool)).toBe('magnifier')
-  for (const tool of ['Bash', 'Agent', 'mcp__x__y']) expect(propFor(tool)).toBeNull()
+  expect(propFor('Agent')).toBe('flag') // R17
+  for (const tool of ['Monitor', 'ScheduleWakeup']) expect(propFor(tool)).toBe('hourglass') // R18
+  expect(propFor('Write')).toBe('pencil') // R19
+  expect(propFor('Bash', 'npm test')).toBe('flask') // R20
+  for (const tool of ['Bash', 'AskUserQuestion', 'mcp__x__y', 'toString', 'constructor']) expect(propFor(tool)).toBeNull()
+  expect(propFor('Bash', 'git status')).toBeNull()
+  expect(propFor('Bash', 42)).toBeNull() // コマンドが文字列でなければテストではない
+  expect(propFor('Read', 'npm test')).toBe('magnifier') // Bash 以外ではコマンドを見ない
 })
 
-test('R1・R2・契約 wield: 呼び出し元だけが持ち、残りは 30 コマ、途切れは 0 に戻る', () => {
-  const crew = advanceBy(sync(advanceBy(hereMain(), 50, 200), ['a'], () => 0, 200), FADE_FRAMES, 200)
+test('R20: テストを走らせるコマンドの判定', () => {
+  const tests = [
+    'npm test',
+    'go test ./...',
+    'cargo test --release',
+    'claude plugin test clawd-wander',
+    'make test',
+    'pytest -q',
+    'npx vitest run',
+    'python -m pytest tests/',
+    'bunx jest --watch=false',
+    'cd app && npm test',
+    'git status; yarn test',
+    'npm run build | tee log && rspec',
+    'CI=1 npm test',
+    'npm test -- -t "renders"',
+    'vendor/bin/phpunit', // パス付きのテストの実行コマンド
+    './node_modules/.bin/jest --ci',
+    'npm run test:unit', // test: で始まるスクリプト
+    'pnpm test:e2e',
+    "cat > t.txt <<'EOF'\nhello\nEOF\nnpm test", // heredoc のあとのコマンドは数える
+    "cat <<'EOF' | pytest -\nx\nEOF", // heredoc の始まりの行の残りは数える
+    'cat <<< "hello"\nnpm test', // ヒアストリング <<< は heredoc ではない
+    '(cd app && npm test)', // 括弧でも区切る
+    'npx jest@29 --ci', // バージョン付きの名前
+  ]
+  const others = [
+    'ls',
+    'git status',
+    'test -f a.txt',
+    'cat tests/a.test.ts',
+    'echo contest',
+    'npm run build',
+    'grep -r test src',
+    'echo test',
+    'rg test',
+    'git commit -m "run test now"', // 引用符の中は数えない
+    "gh pr create --title 'add test' --body 'see jest'",
+    "cat > t.py <<'EOF'\nimport unittest\nEOF", // heredoc の本文は数えない
+    "gh pr create --body-file - <<'EOF'\n- [ ] run the test suite\nEOF",
+    'git commit -m "$(cat <<\'EOF\'\nfix "run the test suite" hang\nEOF\n)"',
+    'cat <<-EOF\n\trun test now\n\tEOF',
+    'if test -f a; then echo ok; fi', // if・! のあとの test はシェルの条件判定
+    '! test -f a',
+    'git commit -m "first line \\\nrun the test suite"', // 引用符の中の \ と改行
+    'npm run build & echo test', // 単独の & でも区切る
+    '',
+  ]
+  expect(tests.filter(c => !runsTests(c))).toEqual([])
+  expect(others.filter(c => runsTests(c))).toEqual([])
+})
+
+const FLAG_RED = 0xe04f4f
+const FLASK_GLASS = 0xc8d0d8
+const FLASK_LIQUID = 0x5cd67a
+const PENCIL_YELLOW = 0xf2c94c
+const HOURGLASS_FRAME = 0xb08850
+
+test('R22・契約 propPixels: どの道具も道具の色で塗る', () => {
+  const owner = 0x123456
+  const colorsOf = (kind: Parameters<typeof propPixels>[0]) =>
+    new Set(propPixels(kind, 'right', owner).flat().filter(color => color !== null))
+  expect(colorsOf('hammer')).toEqual(new Set([0x5a606b, 0xd6a86e]))
+  expect(colorsOf('magnifier')).toEqual(new Set([0xc0c6cc, 0xa0703c]))
+  expect(colorsOf('flag')).toEqual(new Set([0x9a9a9a, FLAG_RED]))
+  expect(colorsOf('flask')).toEqual(new Set([FLASK_GLASS, FLASK_LIQUID]))
+  expect(colorsOf('pencil')).toEqual(new Set([0xf08fa8, PENCIL_YELLOW, 0xe8b98a, 0x444444]))
+  expect(colorsOf('hourglass')).toEqual(new Set([HOURGLASS_FRAME, 0xf2d27a]))
+  // 高さはどれも 6、左に持つと左右反転、行列の張り出しは 1 + 幅（旗 7・フラスコ 7・鉛筆 3・砂時計 6）
+  for (const [kind, width] of [['flag', 6], ['flask', 6], ['pencil', 2], ['hourglass', 5]] as const) {
+    const right = propPixels(kind, 'right', owner)
+    expect({ kind, size: [right.length, right[0]!.length] }).toEqual({ kind, size: [6, width] })
+    expect(propPixels(kind, 'left', owner)).toEqual(right.map(row => [...row].reverse()))
+    expect(reach(grab(null, kind))).toBe(1 + width)
+  }
+})
+
+test('R22: 1 マスがちょうど 2 色で空きが無ければ、多いほうを文字の色、少ないほうを背景の色にする', () => {
+  // 本体（x = 0、右向き）がフラスコを持つ。フラスコの胴（4・5 行目）でガラスと液体が 1 マスに入る
+  const cells = paint([clawd(0, { facing: 'right', pose: 'stepA', prop: { kind: 'flask', side: 'right', raised: false } })], 16)
+  const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+  const pairs = new Set<string>()
+  for (let at = 0; at < words.length; at += 3) if (words[at + 2] !== 0x01000000) pairs.add(`${words[at + 1]!.toString(16)}/${words[at + 2]!.toString(16)}`)
+  expect([...pairs].some(pair => pair.split('/').sort().join('/') === [FLASK_GLASS, FLASK_LIQUID].map(c => c.toString(16)).sort().join('/'))).toBe(true)
+  // 本体だけのマスは今までどおり背景を塗らない
+  const plain = new Uint32Array(Uint8Array.from(atob(paint([clawd(0)], 16)), c => c.charCodeAt(0)).buffer)
+  expect([...plain].filter((_, i) => i % 3 === 2).every(color => color === 0x01000000)).toBe(true)
+})
+
+test('R1・R2・S1・S5・契約 wield: 呼び出し元だけが持ち、使っている数が増え、途切れは 0 に戻る', () => {
+  const crew = advanceBy(sync(advanceBy(hereMain(), 50, 200), ['a'], () => 0, 200), FADE_FRAMES + 30, 200)
+  expect(crew[1]!.idle).toBeGreaterThan(0)
+  const snapshot = JSON.stringify(crew)
   const held = wield(crew, 'a', 'Edit')
-  expect(held[1]!.prop).toEqual({ kind: 'hammer', left: PROP_FRAMES })
+  release(crew, 'a', 'Edit')
+  expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
+  expect(held[1]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // S1
   expect(held[1]!.idle).toBe(0)
   expect(held[0]!.prop).toBeNull()
-  expect(wield(held, 'a', 'Grep')[1]!.prop).toEqual({ kind: 'magnifier', left: PROP_FRAMES }) // 持ち替え
+  expect(wield(held, 'a', 'Grep')[1]!.prop).toEqual({ kind: 'magnifier', using: 2, left: PROP_FRAMES }) // S5 持ち替え
 })
 
-test('R3・R10: 対応しないツールや、いない id では何も変わらない', () => {
+test('R3・R10: 対応しないツールや、いない id では、始まりも終わりも何も変えない', () => {
   const held = wield(hereMain(), MAIN, 'Edit')
   expect(wield(held, MAIN, 'Bash')).toBe(held)
+  expect(release(held, MAIN, 'Bash')).toBe(held)
   expect(wield(held, 'nobody', 'Edit')).toEqual(held)
+  expect(release(held, 'nobody', 'Edit')).toEqual(held)
 })
 
-test('R4: 30 コマで道具をしまう', () => {
-  const held = wield(hereMain(), MAIN, 'Read')
-  expect(advanceBy(held, PROP_FRAMES - 1, 200)[0]!.prop).not.toBeNull()
-  expect(advanceBy(held, PROP_FRAMES, 200)[0]!.prop).toBeNull()
+test('R11・S2・S6・S10・契約 release: 終わると使っている数が減り（0 より下げない）、残りが 100 コマになる', () => {
+  expect(PROP_FRAMES).toBe(100)
+  const twice = wield(wield(hereMain(), MAIN, 'Read'), MAIN, 'Read')
+  expect(release(twice, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES }) // S6 n ≥ 2
+  const busy = advanceBy(wield(hereMain(), MAIN, 'Edit'), 30, 200)
+  expect(busy[0]!.idle).toBeGreaterThan(0)
+  const once = release(busy, MAIN, 'Edit')
+  expect(once[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES }) // S6 n = 1
+  expect(once[0]!.idle).toBe(0) // 途切れも 0 に戻る
+  expect(release(hereMain(), MAIN, 'Grep')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES }) // S2
+  const lingering = advanceBy(once, 40, 200)
+  expect(release(lingering, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES }) // S10 持ち替えて数え直す
+})
+
+test('R12・S7・S9: 使っている間は何コマ進んでも残りが減らず、余韻の途中で始まれば使用中に戻る', () => {
+  const using = advanceBy(wield(hereMain(), MAIN, 'WebFetch'), PROP_FRAMES * 3, 200)
+  expect(using[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES }) // S7
+  const lingering = advanceBy(release(using, MAIN, 'WebFetch'), 60, 200)
+  expect(lingering[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES - 60 })
+  expect(wield(lingering, MAIN, 'Edit')[0]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // S9
+})
+
+test('R4・S3・S11: 使い終えてから 100 コマで道具をしまう', () => {
+  const done = release(wield(hereMain(), MAIN, 'Read'), MAIN, 'Read')
+  expect(advanceBy(done, PROP_FRAMES - 1, 200)[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: 1 })
+  expect(advanceBy(done, PROP_FRAMES, 200)[0]!.prop).toBeNull()
+  expect(advanceBy(hereMain(), 1, 200)[0]!.prop).toBeNull() // S3
+})
+
+test('契約 grab・relax・decay・Grip: 数は 0 より下がらず、残りは使い終えてから 1 コマずつ減る', () => {
+  const g = grab(null, 'hammer')
+  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES })
+  expect(grab(g, 'magnifier')).toEqual({ kind: 'magnifier', using: 2, left: PROP_FRAMES })
+  expect(relax(null, 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES })
+  expect(relax(relax(g, 'hammer'), 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES }) // 0 より下げない
+  expect(decay(g)).toBe(g) // 使っている間は減らない
+  expect(decay({ kind: 'hammer', using: 0, left: 2 })).toEqual({ kind: 'hammer', using: 0, left: 1 })
+  expect(decay({ kind: 'hammer', using: 0, left: 1 })).toBeNull()
+  expect(decay(null)).toBeNull()
+  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // 引数を変更しない
+})
+
+test('契約 PROP_GAP・reach: 張り出しは、持っていなければ 0、ハンマー 6、虫めがね 7', () => {
+  expect(PROP_GAP).toBe(1)
+  expect(reach(null)).toBe(0)
+  expect(reach(grab(null, 'hammer'))).toBe(6)
+  expect(reach(relax(null, 'magnifier'))).toBe(7)
+})
+
+test('R14・R15・S4・S8・S12: 消えきるとしまい、消えきっている 1 体には持たせない', () => {
+  const vanish = (crew: Crew) => advanceBy(setMain(crew, false), LEAP_FRAMES + FADE_FRAMES, 200)
+  const using = vanish(wield(hereMain(), MAIN, 'Edit'))
+  expect(using[0]!.presence).toEqual(GONE)
+  expect(using[0]!.prop).toBeNull() // S8: 終わりが届かないまま消えきっても、持ちっぱなしにならない
+  expect(vanish(release(wield(hereMain(), MAIN, 'Edit'), MAIN, 'Edit'))[0]!.prop).toBeNull() // S12
+  expect(vanish(hereMain())[0]!.prop).toBeNull() // S4
+  expect(wield(using, MAIN, 'Edit')[0]!.prop).toBeNull() // R15
+  expect(release(using, MAIN, 'Edit')[0]!.prop).toBeNull()
+  // 現れかけたばかりで引っ込めると、その場で消えきる。そのときも道具をしまう
+  expect(setMain(wield(setMain(assemble(), true), MAIN, 'Edit'), false)[0]!).toMatchObject({ presence: GONE, prop: null })
 })
 
 test('R5・T4: 右向きは右に、左向きは左に反転して、絵の端から 1 ピクセル空けて描く', () => {
@@ -712,6 +883,22 @@ test('R5・T4: 右向きは右に、左向きは左に反転して、絵の端�
   expect(l[5]![mx]).toBe(true) // 反転した柄の先
   expect(l[1]![mx + 5]).toBe(true) // レンズの右端
   expect(l[1]![mx + 6]).toBe(false) // 絵との間は 1 ピクセル空く
+})
+
+test('R21: 向いている側で帯からはみ出すときは、反対の手に持ち替えて切らずに描く', () => {
+  const held = (x: number, facing: 'left' | 'right', side: 'left' | 'right') =>
+    clawd(x, { facing, pose: 'stepA', prop: { kind: 'hammer', side, raised: false } })
+  const draw = (actor: Actor, columns: number) => pixels(decode(paint([actor], columns), columns).lines)
+  // 左端で左を向くと、右の手に（右に持つ向きの絵で）持つ
+  expect(draw(held(0, 'left', 'left'), 20)).toEqual(draw(held(0, 'left', 'right'), 20))
+  // 右端で右を向くと、左の手に持つ（帯は 40 ピクセル、絵の幅は 18）
+  expect(draw(held(22, 'right', 'right'), 20)).toEqual(draw(held(22, 'right', 'left'), 20))
+  // 収まるときは向いている側のまま
+  expect(draw(held(10, 'left', 'left'), 20)).not.toEqual(draw(held(10, 'left', 'right'), 20))
+  // どちらにも収まらない狭い帯（20 ピクセル）では、向いている側（右）に描いてはみ出す分を切る。
+  // ハンマーの頭（1 行目）が右端の列 19 にだけ残り、絵の左の空き列 0 には描かない
+  const narrow = draw(held(1, 'right', 'right'), 10)
+  expect([narrow[0]![19], narrow[0]![0]]).toEqual([true, false])
 })
 
 test('R6・R7: 持ったまま歩き、ハンマーは脚のコマに合わせて上下する', () => {
@@ -737,11 +924,23 @@ test('R6・R7: 持ったまま歩き、ハンマーは脚のコマに合わせ�
   expect(at(true)[3]![handle]).toBe(true)
 })
 
-test('R8・T1・T2・T3: 驚き中・出入り中・道具が無いときは描かない', () => {
+test('R8・T1・T2・T3・T5: 驚き中・居眠り中・出入り中・道具が無いときは描かない', () => {
   expect(actors(poke(wield(hereMain(), MAIN, 'Edit'), MAIN, true))[0]!.prop).toBeUndefined() // T2
   expect(actors(wield(setMain(assemble(), true), MAIN, 'Edit'))[0]!.prop).toBeUndefined() // T1 現れかけ
   expect(actors(setMain(wield(hereMain(), MAIN, 'Edit'), false))[0]!.prop).toBeUndefined() // T1 跳ねる
+  const leaving = advanceBy(setMain(wield(hereMain(), MAIN, 'Edit'), false), LEAP_FRAMES, 200)
+  expect(leaving[0]!.presence.kind).toBe('leaving')
+  expect(actors(leaving)[0]!.prop).toBeUndefined() // T1 消えかけ
   expect(actors(hereMain())[0]!.prop).toBeUndefined() // T3
+  // 驚いている間も、残りは減り続ける
+  const startled = advanceBy(poke(release(wield(hereMain(), MAIN, 'Edit'), MAIN, 'Edit'), MAIN, true), 5, 200)
+  expect(startled[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES - 5 })
+  expect(actors(startled)[0]!.prop).toBeUndefined()
+  // T5: 使ったまま 60 秒たつと、道具を持ったまま居眠りし、道具は描かない
+  const dozing = advanceBy(wield(hereMain(), MAIN, 'Edit'), DOZE_FRAMES, 200)
+  expect(dozing[0]!.prop).not.toBeNull()
+  expect(actors(dozing)[0]!).toMatchObject({ pose: 'sleep' })
+  expect(actors(dozing)[0]!.prop).toBeUndefined()
 })
 
 test('register: Edit の呼び出しで本体がハンマーを持つ', async ($, on) => {
@@ -761,6 +960,185 @@ test('register: Edit の呼び出しで本体がハンマーを持つ', async ($
   await clock.advance(200)
   const after = litCount(decode(frames[frames.length - 1]!, 60).lines)
   expect(after - before).toBeGreaterThanOrEqual(8) // ハンマーの分（上げていれば頭の 1 行が切れる）
+  await ui.unmount()
+})
+
+test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const calls = [
+    [{ tool: 'Agent', description: 'd', prompt: 'p' }, FLAG_RED],
+    [{ tool: 'Monitor', command: 'true', description: 'd', timeout_ms: 1000 }, HOURGLASS_FRAME],
+    [{ tool: 'Write', file_path: 'a.md', content: 'x' }, PENCIL_YELLOW],
+    [{ tool: 'Bash', command: 'npm test' }, FLASK_GLASS],
+  ] as const
+  for (const [input, color] of calls) {
+    await $.tool.call(input as never)
+    await ui.redraw(bandProps(true, 60)) // 道具を持ったまま帯を描き直させる。受け付けなければ描画ごと拒否される
+    const found = await ui.find({ key: 'clawd' })
+    const tool = (input as { tool: string }).tool
+    expect({ tool, raster: found?.type, drawn: cellColors(String(found?.props.cells)).has(color) }).toEqual({ tool, raster: 'Raster', drawn: true })
+  }
+  await ui.unmount()
+})
+
+test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  /** 直近 5 秒（50 コマ）のどれかに、道具の色 color が描かれているか（帯の端で向きを変えても切れない。R21） */
+  const shownLately = (color: number) => frames.slice(-50).some(cells => cellColors(cells).has(color))
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+  await clock.advance(5000)
+  expect([FLAG_RED, FLASK_GLASS, PENCIL_YELLOW, HOURGLASS_FRAME].filter(shownLately)).toEqual([]) // テストを走らせない Bash（R3）
+  await $.tool.call({ tool: 'Agent', description: 'd', prompt: 'p' } as never)
+  await clock.advance(3000)
+  expect(shownLately(FLAG_RED)).toBe(true) // 旗（R17）
+  // 旗を持ったまま帯を描き直させても、エンジンは色付きの帯を受け付ける
+  await ui.redraw(bandProps(true, 60))
+  expect((await ui.find({ key: 'clawd' }))?.type).toBe('Raster')
+  await clock.advance(16000)
+  expect(shownLately(FLAG_RED)).toBe(false)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(3000)
+  expect(shownLately(FLASK_GLASS)).toBe(true) // フラスコ（R20）
+  await clock.advance(13000)
+  expect(shownLately(FLASK_GLASS)).toBe(false) // 終わりでも同じコマンドで使い終え、10 秒でしまう（R11）
+  await ui.unmount()
+})
+
+/**
+ * 直近 5 秒（50 コマ）のどれかで、本体だけのときより 8 ピクセル以上多く塗られているか（道具を持っているか）。
+ * 帯の端で外を向いて休む間（最長 30 コマ）は道具が帯の外に切れるので、休みより長く見る
+ */
+const heldLately = (frames: string[], before: number, columns: number) =>
+  frames.slice(-50).some(cells => litCount(decode(cells, columns).lines) - before >= 8)
+
+test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  // 呼び出しは、テストが finish を呼ぶまで終わらない
+  let finish: (result: unknown) => void = () => undefined
+  on('tool.call', () => new Promise(resolve => (finish = resolve)) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const before = litCount(decode(frames[frames.length - 1]!, 60).lines)
+  const call = $.tool.call({ tool: 'WebFetch', url: 'https://example.com', prompt: 'p' } as never)
+  await clock.advance(16000)
+  expect(heldLately(frames, before, 60)).toBe(true) // 始まってから 11〜16 秒、まだ使っている
+  await clock.advance(500)
+  finish({ result: 'ok' }) // 16.5 秒で呼び出しが終わる
+  await call
+  await clock.advance(9400)
+  expect(heldLately(frames, before, 60)).toBe(true) // 終わってから 4.5〜9.4 秒
+  await clock.advance(6000)
+  expect(heldLately(frames, before, 60)).toBe(false) // 終わってから 10.5〜15.4 秒
+  await ui.unmount()
+})
+
+test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => {
+    throw new Error('broken by the test')
+  })
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const before = litCount(decode(frames[frames.length - 1]!, 60).lines)
+  await $.tool.call({ tool: 'Read', file_path: '/nonexistent/clawd-wander-test.md' } as never).catch(() => undefined)
+  await clock.advance(5000)
+  expect(heldLately(frames, before, 60)).toBe(true) // 終わってから 0〜5 秒
+  await clock.advance(11000)
+  expect(heldLately(frames, before, 60)).toBe(false) // 終わってから 11〜16 秒
+  await ui.unmount()
+})
+
+test(
+  'register・R16: 呼び出しが中断されたら、その時点で使い終えたとみなし、10 秒でしまう',
+  {
+    plugins: [
+      {
+        name: 'interrupter',
+        tier: 'prepend',
+        // Esc の代わり。3 秒たったら、下の呼び出しを待たずに答えて中断させる
+        register(on) {
+          on('tool.call', async ($, e, next) => {
+            next(e).catch(() => undefined)
+            await $.clock.sleep(3000)
+            return { deny: 'interrupted by the test' }
+          })
+        },
+      },
+    ],
+  },
+  async ($, on) => {
+    const clock = mock.clock(on)
+    beneath(on)
+    on('agent.list', async () => ({ value: [] }))
+    on('tool.call', () => new Promise(() => undefined) as never) // 呼び出しは自分では終わらない
+    const frames: string[] = []
+    on('ui.blit', async (_$, e) => {
+      if ('cells' in e) frames.push(e.cells)
+      return { value: {} }
+    })
+    const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+    await clock.advance(1500) // 現れきる
+    const before = litCount(decode(frames[frames.length - 1]!, 60).lines)
+    const call = $.tool.call({ tool: 'WebFetch', url: 'https://example.com', prompt: 'p' } as never)
+    await clock.advance(3000) // 中断される
+    await call
+    await clock.advance(9000)
+    expect(heldLately(frames, before, 60)).toBe(true) // 中断から 4〜9 秒
+    await clock.advance(7000)
+    expect(heldLately(frames, before, 60)).toBe(false) // 中断から 11〜16 秒
+    await ui.unmount()
+  },
+)
+
+test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ deny: 'refused by the test' }) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const before = litCount(decode(frames[frames.length - 1]!, 60).lines)
+  await $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'a', new_string: 'b' } as never)
+  await clock.advance(1500)
+  expect(heldLately(frames, before, 60)).toBe(false) // 驚いている 2 秒は描かない
+  await clock.advance(5500)
+  expect(heldLately(frames, before, 60)).toBe(true) // 驚き終えた 2〜7 秒
+  await clock.advance(9000)
+  expect(heldLately(frames, before, 60)).toBe(false) // 終わってから 11〜16 秒
   await ui.unmount()
 })
 
@@ -810,7 +1188,7 @@ test('作業中は歩き回り、作業が終わると止まる', async ($, on) 
   await ui.unmount()
 })
 
-test('サブエージェントが動いている間は色違いが増え、本体の作業が終わっても残る', async ($, on) => {
+test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   let agents: AgentInfo[] = [agent('a1', 'running'), agent('a2', 'completed')]
@@ -828,14 +1206,13 @@ test('サブエージェントが動いている間は色違いが増え、本�
   expect(colorsNow().has(BLUE)).toBe(true) // 動いている a1 だけ。終わった a2 は数えない
   expect(colorsNow().size).toBe(2)
 
-  // 本体の作業が終わっても、サブエージェントが動いていれば帯に残る（本体は消える）
+  // 本体の作業が終わっても、サブエージェントが動いている間は本体も仲間も残る
   await ui.redraw(bandProps(false, 40))
-  expect(await ui.find({ key: 'clawd' })).toBeDefined()
-  await clock.advance(2000) // 跳ねる 0.4 秒 + 消える 1.2 秒
-  expect(colorsNow().has(ORANGE)).toBe(false)
+  await clock.advance(2000)
+  expect(colorsNow().has(ORANGE)).toBe(true)
   expect(colorsNow().has(BLUE)).toBe(true)
 
-  // サブエージェントも終わると、ふわっと消えてから帯ごと消え、止まる
+  // サブエージェントが終わると、本体も仲間もふわっと消えてから帯ごと消え、止まる
   agents = [agent('a1', 'completed')]
   await clock.advance(1000)
   expect(await ui.find({ key: 'clawd' })).toBeDefined()
@@ -919,7 +1296,7 @@ test('Raster の無い画面では描かない', async ($, on) => {
 /** 本体と、いる仲間（a, b。どちらも x = 0）。本体は右向きにずっと歩く */
 const withFriends = (canvas = 400): Crew => advanceBy(sync(hereMain(), ['a', 'b'], () => 0, canvas), FADE_FRAMES, canvas)
 
-/** 行列で k 番目の仲間が本体からさかのぼる距離（R4） */
+/** 行列で k 番目の仲間が本体からさかのぼる距離。誰も道具を持っていないとき（R4・R11） */
 const offsets = (crew: Crew): number[] => {
   let offset = 0
   let ahead = MASCOTS[crew[0]!.mascot].width
@@ -1052,6 +1429,314 @@ test('R7: 驚いている仲間は進まず、驚き終えると追いつく', (
   crew = advanceBy(crew, 20, 400)
   expect(crew[0]!.parade).not.toBeNull()
   expect(crew[1]!.wanderer.x).toBe(crew[0]!.wanderer.x - offsets(crew)[0]!)
+})
+
+/** 道具の張り出し（絵の端から空ける 1 ピクセル＋道具の幅）。R4 の P */
+const REACH = { hammer: 6, magnifier: 7 } as const
+
+/** 1 体だけを描いたピクセル（道具を含む） */
+const alone = (actor: Actor, columns: number) => pixels(decode(paint([actor], columns), columns).lines)
+
+/** a の塗りが、b の塗りから r ピクセル以内（斜めを含む）にあるか */
+const within = (a: boolean[][], b: boolean[][], r: number) => {
+  const around = Array.from({ length: 2 * r + 1 }, (_, i) => i - r)
+  return a.some((row, y) => row.some((on, x) => on && around.some(dy => around.some(dx => b[y + dy]?.[x + dx] === true))))
+}
+
+test('R4・R11: 道具を持つ仲間の前だけ、道具の張り出しを空けて並び、持っていない仲間の前は今までどおり', () => {
+  const crew = advanceBy(lineUp(wield(withFriends(), 'a', 'Edit'), seq(0, 0.9999), 400), 60, 400)
+  const [main, a, b] = crew as [Member, Member, Member]
+  const width = (m: Member) => MASCOTS[m.mascot].width
+  expect(main.wanderer.x - a.wanderer.x).toBe(Math.max(width(main), width(a)) + 2 + REACH.hammer)
+  expect(a.wanderer.x - b.wanderer.x).toBe(Math.max(width(a), width(b)) + 2) // R11
+  // 虫めがねを持つと、b の前も空く
+  const both = advanceBy(wield(crew, 'b', 'Read'), 10, 400)
+  expect(both[1]!.wanderer.x - both[2]!.wanderer.x).toBe(Math.max(width(a), width(b)) + 2 + REACH.magnifier)
+})
+
+test('R4: 道具を持っていても、並び終えたあとは行列が終わるまで、前の 1 体との間が 2 列以上空いている（右向きも左向きも）', () => {
+  const holding = wield(wield(withFriends(), 'a', 'Edit'), 'b', 'Read')
+  // 左向き: 本体を右寄り（x = 200）に置き、仲間を本体の後ろ（右）に置く
+  const leftward: Crew = [
+    placeMain(holding, 200)[0]!,
+    ...holding.slice(1).map((m, k) => ({ ...m, wanderer: { ...m.wanderer, x: 230 + 30 * k } })),
+  ]
+  for (const [start, side] of [[holding, 'right'], [leftward, 'left']] as const) {
+    let crew = advanceBy(lineUp(start, seq(0, 0.9999), 400), 30, 400)
+    expect(crew[0]!.parade!.heading).toBe(side)
+    let frames = 0
+    while (crew[0]!.parade !== null) {
+      // 並び順（本体・a・b）で、後ろの子の塗り（道具を含む）と前の子の塗りの間が 2 列以上空いている
+      const drawn = actors(crew).map(actor => alone(actor, 200))
+      drawn.slice(1).forEach((follower, k) =>
+        expect({ side, frames, k, near: within(follower, drawn[k]!, 2) }).toEqual({ side, frames, k, near: false }),
+      )
+      expect(actors(crew).slice(1).map(x => x.prop?.side)).toEqual([side, side])
+      crew = advanceBy(crew, 1, 400)
+      frames += 1
+    }
+    expect(frames).toBeGreaterThan(100)
+  }
+})
+
+test('R10: 行列の途中で道具を持つと、その仲間と後ろの仲間は張り出しの分だけ下がるが、向きは変えない', () => {
+  let crew = advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 60, 400) // 並び終えている。誰も持っていない
+  crew = wield(crew, 'a', 'Read')
+  for (let i = 0; i < 6; i += 1) {
+    crew = advanceBy(crew, 1, 400)
+    expect({ i, facings: actors(crew).slice(1).map(x => x.facing) }).toEqual({ i, facings: ['right', 'right'] })
+  }
+  const [main, a, b] = crew as [Member, Member, Member]
+  const width = (m: Member) => MASCOTS[m.mascot].width
+  expect(main.wanderer.x - a.wanderer.x).toBe(Math.max(width(main), width(a)) + 2 + REACH.magnifier)
+  expect(a.wanderer.x - b.wanderer.x).toBe(Math.max(width(a), width(b)) + 2)
+})
+
+test('R10: 2 体が続けて道具を持ち、張り出し 2 つ分下がるときも振り返らない。本体が止まっていても前を向いて並び直す', () => {
+  let crew = advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 60, 400) // 並び終えている。誰も持っていない
+  crew = poke(crew, MAIN, true) // 本体が驚いて止まる
+  crew = wield(wield(crew, 'a', 'Edit'), 'b', 'Read') // b は 6 + 7 = 13 ピクセル下がる
+  for (let i = 0; i < 10; i += 1) {
+    crew = advanceBy(crew, 1, 400)
+    expect({ i, facings: actors(crew).slice(1).map(x => x.facing) }).toEqual({ i, facings: ['right', 'right'] })
+  }
+  const [main, a, b] = crew as [Member, Member, Member]
+  const width = (m: Member) => MASCOTS[m.mascot].width
+  expect(main.wanderer.x - a.wanderer.x).toBe(Math.max(width(main), width(a)) + 2 + REACH.hammer)
+  expect(a.wanderer.x - b.wanderer.x).toBe(Math.max(width(a), width(b)) + 2 + REACH.magnifier)
+})
+
+test('R10・R11: 後ずさりは自分と前の仲間の張り出しの合計まで。道具が無ければ、今までどおり振り返って下がる', () => {
+  const lined = advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 60, 400) // 並び終えている。誰も持っていない
+  /** id の仲間を、いまの位置から dx ピクセル前（右）へずらし、右を向かせる */
+  const nudge = (crew: Crew, id: string, dx: number): Crew =>
+    crew.map(m => (m.id !== id ? m : { ...m, wanderer: { ...m.wanderer, x: m.wanderer.x + dx, facing: 'right' } }))
+  // 道具なし: 目標より 2 ピクセル前にいる a は、振り返って下がる（R11）
+  expect(actors(advanceBy(nudge(lined, 'a', 3), 1, 400))[1]!.facing).toBe('left')
+  // a がハンマー（6）、b が虫めがね（7）を持って並び直したあと、a が目標より 9 ピクセル前にいる。
+  // a の上限は自分の 6 だけ（後ろの b の 7 は足さない）なので、振り返って下がる
+  const holding = advanceBy(wield(wield(lined, 'a', 'Edit'), 'b', 'Read'), 10, 400)
+  expect(actors(advanceBy(nudge(holding, 'a', 10), 1, 400))[1]!.facing).toBe('left')
+})
+
+test('R5・R10: 道具を持っていても、本体より前から回り込むような長い移動では、進む向きを向く', () => {
+  const crew = withFriends()
+  const x = crew[0]!.wanderer.x
+  const placed: Crew = [
+    crew[0]!,
+    { ...crew[1]!, wanderer: { ...crew[1]!.wanderer, x: x + 40 } }, // a は前
+    { ...crew[2]!, wanderer: { ...crew[2]!.wanderer, x: x - 30 } }, // b は後ろ
+  ]
+  let lined = lineUp(wield(placed, 'a', 'Edit'), seq(0, 0.9999), 400)
+  expect(lined.slice(1).map(m => m.id)).toEqual(['b', 'a'])
+  lined = advanceBy(lined, 3, 400)
+  expect(actors(lined)[2]!.facing).toBe('left') // a は後ろへ回るので、後ろを向いて歩く
+})
+
+test('R1: 道具の分を含めて、後ろに列が収まるときだけ始める', () => {
+  const crew = withFriends()
+  const line = offsets(crew).at(-1)! // 道具を持っていないときの列の長さ
+  const fits = placeMain(crew, line + 5) // 右のほうが広いので右へ進み、後ろ（左）に line + 5 ピクセルある
+  expect(lineUp(fits, seq(0, 0), 400)[0]!.parade).not.toBeNull()
+  let calls = 0
+  const counting = () => {
+    calls += 1
+    return 0
+  }
+  // a がハンマー（6）を持つと、列が line + 6 になって収まらない
+  expect(lineUp(wield(fits, 'a', 'Edit'), counting, 400)[0]!.parade).toBeNull()
+  expect(calls).toBe(0)
+})
+
+// 行列の途中で止まった仲間（.scratch/parade-rejoin/spec.md）
+
+/** 本体・a（ハンマー）・b（虫めがね）が右へ並び終えた行列 */
+const linedWithProps = (): Crew =>
+  advanceBy(lineUp(wield(wield(withFriends(), 'a', 'Edit'), 'b', 'Read'), seq(0, 0.9999), 400), 60, 400)
+
+/** frames コマ進め、そのたびに仲間（ids を渡せばその仲間だけ）が右を向いていることを確かめる（振り返らない） */
+const facingAhead = (start: Crew, frames: number, ids?: readonly string[]): Crew => {
+  let crew = start
+  for (let i = 0; i < frames; i += 1) {
+    crew = advanceBy(crew, 1, 400)
+    const facings = actors(crew)
+      .filter((_, k) => k > 0 && (ids === undefined || ids.includes(crew[k]!.id)))
+      .map(x => x.facing)
+    expect({ i, facings }).toEqual({ i, facings: facings.map(() => 'right') })
+  }
+  return crew
+}
+
+/** 並び終えた位置か（a・b が、道具の分を含めた間隔で本体の後ろにいる） */
+const expectSettled = (crew: Crew) => {
+  const [main, a, b] = crew as [Member, Member, Member]
+  const width = (m: Member) => MASCOTS[m.mascot].width
+  expect(main.wanderer.x - a.wanderer.x).toBe(Math.max(width(main), width(a)) + 2 + REACH.hammer)
+  expect(a.wanderer.x - b.wanderer.x).toBe(Math.max(width(a), width(b)) + 2 + REACH.magnifier)
+}
+
+test('parade-rejoin の R1・R2: 仲間が驚くと後ろの仲間はその場で待ち、驚き終えたら振り返らずに追いつく', () => {
+  let crew = poke(linedWithProps(), 'a', true)
+  const bx = crew[2]!.wanderer.x
+  for (let i = 0; i < STARTLE_FRAMES - 1; i += 1) {
+    crew = advanceBy(crew, 1, 400)
+    const b = actors(crew)[2]!
+    expect({ i, x: b.x, pose: b.pose, facing: b.facing }).toEqual({ i, x: bx, pose: 'stand', facing: 'right' }) // R1
+    expect(crew[2]!.wanderer.x).toBeLessThan(crew[1]!.wanderer.x) // 追い越さない
+  }
+  expectSettled(facingAhead(crew, 30)) // R2
+})
+
+test('parade-rejoin の R1: 驚いた仲間より後ろの仲間は、すぐ後ろでなくても全員待つ', () => {
+  const three = advanceBy(sync(hereMain(), ['a', 'b', 'c'], () => 0, 400), FADE_FRAMES, 400)
+  let crew = poke(advanceBy(lineUp(three, seq(0, 0.9999), 400), 60, 400), 'a', true)
+  expect(crew.slice(1).map(m => m.id)).toEqual(['a', 'b', 'c'])
+  const behind = crew.slice(2).map(m => m.wanderer.x)
+  crew = advanceBy(crew, STARTLE_FRAMES - 1, 400)
+  expect(crew.slice(2).map(m => m.wanderer.x)).toEqual(behind)
+})
+
+/** 本体と、いる仲間 a・b・c（どれも x = 0）。本体は右向きにずっと歩く */
+const threeFriends = (): Crew => advanceBy(sync(hereMain(), ['a', 'b', 'c'], () => 0, 400), FADE_FRAMES, 400)
+
+test('parade-rejoin の R4: 並び順で後ろの仲間が止まっても、前の仲間は進み続ける', () => {
+  let crew = poke(advanceBy(lineUp(threeFriends(), seq(0, 0.9999), 400), 60, 400), 'c', true)
+  const before = crew.slice(1, 3).map(m => m.wanderer.x)
+  crew = advanceBy(crew, 10, 400)
+  expect(crew.slice(1, 3).map((m, k) => m.wanderer.x - before[k]!)).toEqual([10, 10]) // 本体と同じく 1 コマ 1 ピクセル
+})
+
+test('parade-rejoin の R5: 待っている間に道具を持つと、向きを変えずに下がり、後ろの仲間も続いて下がる', () => {
+  const lined = advanceBy(lineUp(threeFriends(), seq(0, 0.9999), 400), 60, 400) // 誰も道具を持っていない
+  let crew: Crew = lined.map(m => (m.id === 'a' ? { ...m, idle: DOZE_FRAMES } : m)) // a が居眠りする
+  crew = advanceBy(wield(crew, 'c', 'Read'), 5, 400) // 待っている c が虫めがねを持つ
+  crew = wield(crew, 'b', 'Edit') // 待っている b がハンマーを持つ
+  for (let i = 0; i < 5; i += 1) {
+    crew = advanceBy(crew, 1, 400)
+    // b が下がるコマのうちに c も続いて下がり、c と b の間はどのコマでも 2 列以上空いている
+    const drawn = actors(crew).map(actor => alone(actor, 200))
+    const facings = actors(crew).slice(2).map(x => x.facing)
+    expect({ i, facings, near: within(drawn[3]!, drawn[2]!, 2) }).toEqual({ i, facings: ['right', 'right'], near: false })
+  }
+  expect(actors(crew)[1]!.pose).toBe('sleep')
+  const [, a, b, c] = crew as [Member, Member, Member, Member]
+  const width = (m: Member) => MASCOTS[m.mascot].width
+  expect(a.wanderer.x - b.wanderer.x).toBe(Math.max(width(a), width(b)) + 2 + REACH.hammer)
+  expect(b.wanderer.x - c.wanderer.x).toBe(Math.max(width(b), width(c)) + 2 + REACH.magnifier)
+  // 描いた絵でも、すぐ前の仲間との間が 2 列以上空いている
+  const drawn = actors(crew).map(actor => alone(actor, 200))
+  expect([within(drawn[2]!, drawn[1]!, 2), within(drawn[3]!, drawn[2]!, 2)]).toEqual([false, false])
+  // R1: 待っている間に道具をしまっても、前へは詰めない
+  const stowed = advanceBy(crew.map(m => (m.id === 'b' ? { ...m, prop: null } : m)), 5, 400)
+  expect(stowed.slice(2).map(m => m.wanderer.x)).toEqual(crew.slice(2).map(m => m.wanderer.x))
+})
+
+test('parade-rejoin の R6: 行列を始めるとき、歩けない仲間は並び順の最後に回り、ほかの仲間は待たずに並ぶ', () => {
+  const crew = withFriends()
+  const x = crew[0]!.wanderer.x
+  const placed: Crew = [
+    crew[0]!,
+    { ...crew[1]!, idle: DOZE_FRAMES, wanderer: { ...crew[1]!.wanderer, x: x - 25 } }, // a は本体のすぐ後ろで居眠り
+    { ...crew[2]!, wanderer: { ...crew[2]!.wanderer, x: x - 60 } }, // b はその後ろ
+  ]
+  let lined = lineUp(placed, seq(0, 0.9999), 400)
+  expect(lined.slice(1).map(m => m.id)).toEqual(['b', 'a'])
+  const bx = lined[1]!.wanderer.x
+  lined = advanceBy(lined, 5, 400)
+  expect(lined[1]!.wanderer.x).toBeGreaterThan(bx) // b は待たずに本体を追う
+})
+
+test('parade-rejoin の R1・R2: 消えかけから戻る仲間の後ろでは待ち、戻ったら振り返らずに追いつく', () => {
+  const lined = linedWithProps()
+  let crew = advanceBy(sync(lined, ['b'], () => 0, 400), LEAP_FRAMES + 3, 400) // a が消えかける
+  expect(crew[1]!.presence.kind).toBe('leaving')
+  const bx = crew[2]!.wanderer.x
+  crew = advanceBy(sync(crew, ['a', 'b'], () => 0, 400), 1, 400) // a が戻ってくる（現れかけ）
+  expect(crew[1]!.presence.kind).toBe('arriving')
+  expect(crew[2]!.wanderer.x).toBe(bx) // R1
+  expectSettled(facingAhead(crew, 40, ['b'])) // R2
+})
+
+test('parade-rejoin の R1・R5: 回り込みの途中で前の仲間が止まると、進む向きを向いて後ろへ回り、立ち止まったら行列の向きを向く', () => {
+  const crew = threeFriends()
+  const placed: Crew = [
+    placeMain(crew, 100)[0]!,
+    { ...crew[1]!, wanderer: { ...crew[1]!.wanderer, x: 75 } }, // a は本体の後ろ
+    { ...crew[2]!, wanderer: { ...crew[2]!.wanderer, x: 170 } }, // b・c は本体の前
+    { ...crew[3]!, wanderer: { ...crew[3]!.wanderer, x: 200 } },
+  ]
+  let lined = advanceBy(lineUp(wield(placed, 'b', 'Edit'), seq(0, 0.9999), 400), 4, 400)
+  expect(lined.slice(1).map(m => m.id)).toEqual(['a', 'b', 'c'])
+  // 回り込みの途中で a が居眠りする。b・c はそのとき行列の向き（右）を向いていたとする
+  lined = lined.map(m =>
+    m.id === 'a' ? { ...m, idle: DOZE_FRAMES } : m.id === MAIN ? m : { ...m, wanderer: { ...m.wanderer, facing: 'right' as const } },
+  )
+  lined = advanceBy(lined, 1, 400)
+  expect(actors(lined).slice(2).map(x => x.facing)).toEqual(['left', 'left']) // a より前にいるので、進む向き（左）を向いて下がる
+  lined = advanceBy(lined, 80, 400)
+  const [, a, b, c] = lined as [Member, Member, Member, Member]
+  expect(b.wanderer.x).toBeLessThan(a.wanderer.x)
+  expect(c.wanderer.x).toBeLessThan(b.wanderer.x)
+  expect(actors(lined).slice(2).map(x => x.facing)).toEqual(['right', 'right']) // 立ち止まったら行列の向き
+  const drawn = actors(lined).map(actor => alone(actor, 200))
+  expect([within(drawn[2]!, drawn[1]!, 2), within(drawn[3]!, drawn[2]!, 2)]).toEqual([false, false])
+})
+
+/** 本体・a（ハンマー）・b（虫めがね）が左へ並び終えた行列 */
+const linedLeftWithProps = (): Crew => {
+  const holding = wield(wield(withFriends(), 'a', 'Edit'), 'b', 'Read')
+  const leftward: Crew = [
+    placeMain(holding, 200)[0]!,
+    ...holding.slice(1).map((m, k) => ({ ...m, wanderer: { ...m.wanderer, x: 230 + 30 * k } })),
+  ]
+  return advanceBy(lineUp(leftward, seq(0, 0.9999), 400), 30, 400)
+}
+
+test('parade-rejoin の R7: 左へ進む行列で、待っている仲間はすぐ前の仲間の zZ・「!」から 2 列以上離れる', () => {
+  const dozing = linedLeftWithProps().map(m => (m.id === 'a' ? { ...m, idle: DOZE_FRAMES } : m))
+  const startled = poke(linedLeftWithProps(), 'a', true)
+  for (const [kind, start] of [['doze', dozing], ['startle', startled]] as const) {
+    expect(start[0]!.parade!.heading).toBe('left')
+    let crew = advanceBy(start, 2, 400) // 記号を出し始めてから下がりきるまでの 2 コマを除く
+    for (let i = 0; i < 15; i += 1) {
+      // alone は文字のマス（zZ）を、4 つとも塗ったピクセルとして読む
+      const drawn = actors(crew).map(actor => alone(actor, 200))
+      expect({ kind, i, near: within(drawn[2]!, drawn[1]!, 2) }).toEqual({ kind, i, near: false })
+      crew = advanceBy(crew, 1, 400)
+    }
+  }
+})
+
+test('parade-rejoin の R8: 行列の間に来た仲間は、最後尾で止まっている仲間より前に並び、待たずについていく', () => {
+  let crew = advanceBy(lineUp(threeFriends(), seq(0, 0.9999), 400), 40, 400)
+  crew = crew.map(m => (m.id === 'c' ? { ...m, idle: DOZE_FRAMES } : m)) // 最後尾の c が居眠りする
+  crew = join(crew, 'd', () => 0.5, 400)
+  expect(crew.slice(1).map(m => m.id)).toEqual(['a', 'b', 'd', 'c'])
+  crew = advanceBy(crew, 70, 400)
+  const [, , b, d] = crew as [Member, Member, Member, Member]
+  expect(b.wanderer.x - d.wanderer.x).toBe(Math.max(MASCOTS[b.mascot].width, MASCOTS[d.mascot].width) + 2)
+  expect(actors(crew)[3]!.facing).toBe('right')
+})
+
+test('parade-rejoin の R1・R2: 居眠りしている仲間の後ろでは待ち、起きたら振り返らずに追いつく', () => {
+  let crew: Crew = linedWithProps().map(m => (m.id === 'a' ? { ...m, idle: DOZE_FRAMES } : m))
+  const bx = crew[2]!.wanderer.x
+  crew = advanceBy(crew, 20, 400)
+  expect(actors(crew)[1]!.pose).toBe('sleep')
+  expect(crew[2]!.wanderer.x).toBe(bx) // R1
+  crew = wield(poke(crew, 'a', false), 'a', 'Edit') // ツールの呼び出しで起きる
+  expectSettled(facingAhead(crew, 30)) // R2
+})
+
+test('parade-rejoin の R1・R2: 消えていく仲間の後ろでは待ち、消えきったら振り返らずに前へ詰める', () => {
+  let crew = sync(advanceBy(lineUp(withFriends(), seq(0, 0.9999), 400), 60, 400), ['b'], () => 0, 400) // a が終わる
+  const bx = crew[2]!.wanderer.x
+  crew = advanceBy(crew, LEAP_FRAMES + FADE_FRAMES - 1, 400)
+  expect(crew.map(m => [m.id, m.presence.kind])).toEqual([[MAIN, 'here'], ['a', 'leaving'], ['b', 'here']])
+  expect(crew[2]!.wanderer.x).toBe(bx) // R1
+  crew = facingAhead(crew, 30)
+  expect(crew.map(m => m.id)).toEqual([MAIN, 'b'])
+  expect(crew[0]!.wanderer.x - crew[1]!.wanderer.x).toBe(Math.max(MASCOTS.clawd.width, MASCOTS[crew[1]!.mascot].width) + 2) // R2
 })
 
 // ---- 重なり（.scratch/overlap/spec.md） ---------------------------------------

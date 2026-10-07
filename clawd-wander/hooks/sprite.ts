@@ -4,7 +4,7 @@
 // 半セル単位で位置をずらせるので、1 ピクセルずつ滑らかに歩ける。
 
 import { type Facing, MASCOT_HEIGHT, type MascotId, MASCOTS, type Pose } from './mascots'
-import { propBitmap, type PropId } from './props'
+import { PROP_GAP, propPixels, type PropId } from './props'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -33,6 +33,19 @@ export type Actor = {
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
+
+/**
+ * 記号が、絵の右端（x + 幅）からさらに何ピクセル右まで描かれうるか（行列の間隔に使う。.scratch/parade-rejoin/spec.md の R7）。
+ * 記号は、そのコマの絵の右端の塗りから 2 ピクセル右に置く。驚きは震えの 1 ピクセルを、
+ * 居眠りはマスへの寄せ（最大 1 ピクセル）と、右隣のマスに置く Z の分を含む
+ */
+export function emoteReach(mascot: MascotId, kind: Emote['kind']): number {
+  const bitmap = MASCOTS[mascot].draw('front', kind === 'startle' ? 'stand' : 'sleep')
+  const right = Math.max(...bitmap.map(row => row.lastIndexOf(true)))
+  // 記号の右端（絵の左端からのピクセル、含まない）。「!」は 1 列＋震え 1、zZ は寄せ 1＋2 マス（4 ピクセル）
+  const end = kind === 'startle' ? right + 2 + 1 + 1 : right + 2 + 1 + 4
+  return Math.max(0, end - MASCOTS[mascot].width)
+}
 
 // 驚きの「!」はドット絵（高さ 6 の縦棒と点）。文字の「!」は小さくて見えなかったため。
 const BANG = ['#', '#', '#', '#', '.', '#']
@@ -77,8 +90,9 @@ export function paint(actors: readonly Actor[], columns: number): string {
   // マスに直接置く文字（記号）。ピクセルの絵より手前に描く
   const texts: { col: number; row: number; char: string; color: number }[] = []
   actors.forEach((actor, index) => {
-    // この Actor が塗るピクセル（canvas の添字）
+    // この Actor が塗るピクセル（canvas の添字）と、持ち主の色以外で塗るピクセルの色（道具。props の R22）
     const dots: number[] = []
+    const tinted = new Map<number, number>()
     const opacity = actor.opacity ?? 1
     const lift = actor.lift ?? 0
     const bitmap = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
@@ -92,18 +106,29 @@ export function paint(actors: readonly Actor[], columns: number): string {
       }),
     )
     if (actor.prop !== undefined) {
-      // 道具は絵の左右の端の塗りから 1 ピクセル空けて置く。帯からはみ出す分は切る
-      const tool = propBitmap(actor.prop.kind, actor.prop.side)
-      const toolWidth = tool[0]!.length
+      // 道具は絵の左右の端の塗りから PROP_GAP（1 ピクセル）空けて置く。向いている側で帯からはみ出し、
+      // 反対側なら収まるときは、反対の手に持つ（props の R21）。どちらにも収まらなければ、はみ出す分は切る
+      const { kind } = actor.prop
       const lit = bitmap.flatMap(row => row.flatMap((on, i) => (on ? [i] : [])))
-      const left =
-        actor.prop.side === 'right' ? actor.x + Math.max(...lit) + 2 : actor.x + Math.min(...lit) - 1 - toolWidth
+      const right = actor.x + Math.max(...lit) + 1 + PROP_GAP // 右に置くときの左端（ピクセル）
+      const left = actor.x + Math.min(...lit) - PROP_GAP // 左に置くときの右端の次（ピクセル）
+      const place = (side: 'left' | 'right') => {
+        const tool = propPixels(kind, side, actor.color)
+        const toolWidth = tool[0]!.length
+        const at = side === 'right' ? right : left - toolWidth
+        return { tool, at, fits: at >= 0 && at + toolWidth <= width }
+      }
+      const facing = place(actor.prop.side)
+      const other = place(actor.prop.side === 'right' ? 'left' : 'right')
+      const { tool, at } = !facing.fits && other.fits ? other : facing
       const dy = actor.prop.raised ? -1 : 0
       tool.forEach((row, ty) =>
-        row.forEach((on, tx) => {
-          const x = left + tx
+        row.forEach((color, tx) => {
+          const x = at + tx
           const y = ty + dy
-          if (on && x >= 0 && x < width && y >= 0 && y < height) dots.push(y * width + x)
+          if (color === null || x < 0 || x >= width || y < 0 || y >= height) return
+          dots.push(y * width + x)
+          if (color !== actor.color) tinted.set(y * width + x, color)
         }),
       )
     }
@@ -140,7 +165,7 @@ export function paint(actors: readonly Actor[], columns: number): string {
       }
     }
     for (const dot of dots) {
-      canvas[dot] = actor.color
+      canvas[dot] = tinted.get(dot) ?? actor.color
       owner[dot] = index
     }
   })
@@ -154,8 +179,17 @@ export function paint(actors: readonly Actor[], columns: number): string {
         canvas[(row * 2 + 1) * width + col * 2]!,
         canvas[(row * 2 + 1) * width + col * 2 + 1]!,
       ]
-      const bits = quad.reduce((acc, color, i) => (color >= 0 ? acc | (8 >> i) : acc), 0)
       const at = (row * columns + col) * 3
+      const used = [...new Set(quad.filter(color => color >= 0))]
+      if (used.length === 2 && !quad.includes(-1)) {
+        // 2 色で空きが無いマスは、多いほうを文字の色、少ないほうを背景の色にする（道具の色分け。props の R22）
+        const fore = dominant(quad)
+        words[at] = QUADRANTS.codePointAt(quad.reduce((acc, color, i) => (color === fore ? acc | (8 >> i) : acc), 0))!
+        words[at + 1] = fore
+        words[at + 2] = used.find(color => color !== fore)!
+        continue
+      }
+      const bits = quad.reduce((acc, color, i) => (color >= 0 ? acc | (8 >> i) : acc), 0)
       words[at] = QUADRANTS.codePointAt(bits)!
       words[at + 1] = bits === 0 ? DEFAULT_COLOR : dominant(quad)
       words[at + 2] = DEFAULT_COLOR
