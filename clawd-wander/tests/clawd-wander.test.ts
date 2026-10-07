@@ -26,7 +26,7 @@ import { begin, record, slot, TRAIL } from '../hooks/parade'
 import { decay, grab, PROP_FRAMES, PROP_GAP, propBitmap, propFor, propPixels, reach, relax, runsTests } from '../hooks/props'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
-import { type Actor, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
+import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 
 const PLUGIN = 'clawd-wander'
@@ -654,6 +654,18 @@ test('契約 Actor.emote: 記号は絵の右端の塗りから 1 ピクセル以
   // 帯の右端では記号は描かれないだけで、行の長さは変わらない
   const edge = decode(paint([clawd(2, { emote: { kind: 'startle' } })], 10), 10)
   expect(edge.lines.every(line => [...line].length === 10)).toBe(true)
+})
+
+test('emotes の R4: 「!」は持ち主の色ではなく赤で描く', () => {
+  const cells = paint([clawd(0, { emote: { kind: 'startle' } })], 16)
+  expect(cellColors(cells).has(BANG_COLOR)).toBe(true)
+  expect(BANG_COLOR).toBe(0xe04f4f)
+  // 「!」の列（絵の右端の塗り 16 + 2 = 18 ピクセル目 → マス 9）は赤で、本体の橙は混ざらない
+  const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+  for (let row = 0; row < SPRITE_ROWS; row += 1) {
+    const at = (row * 16 + 9) * 3
+    if (words[at] !== 0x20) expect(words[at + 1]).toBe(BANG_COLOR)
+  }
 })
 
 test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', async ($, on) => {

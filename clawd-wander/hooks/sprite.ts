@@ -49,6 +49,8 @@ export function emoteReach(mascot: MascotId, kind: Emote['kind']): number {
 
 // 驚きの「!」はドット絵（高さ 6 の縦棒と点）。文字の「!」は小さくて見えなかったため。
 const BANG = ['#', '#', '#', '#', '.', '#']
+/** 「!」の色。持ち主の色ではなく赤で描く（2026-10-07 にユーザーの希望で変更。emotes の R4） */
+export const BANG_COLOR = 0xe04f4f
 
 // 居眠りの z・Z はフォントの文字で、マス（2×2 ピクセル）に直接置く。
 // ドット絵だと 1 マスに 2×2 ピクセルしか無く、z の斜めの線がつぶれて「工」に見えたため。
@@ -138,7 +140,9 @@ export function paint(actors: readonly Actor[], columns: number): string {
       const left = actor.x + right + 2
       if (actor.emote.kind === 'startle') {
         BANG.forEach((c, y) => {
-          if (c === '#' && left >= 0 && left < width) dots.push(y * width + left)
+          if (c !== '#' || left < 0 || left >= width) return
+          dots.push(y * width + left)
+          tinted.set(y * width + left, BANG_COLOR)
         })
       } else {
         const column = Math.ceil(left / 2)
