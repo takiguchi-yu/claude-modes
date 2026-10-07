@@ -17,3 +17,5 @@ Claude が作業している間、プロンプトの上で Clawd がうろうろ
 claude plugin validate clawd-wander
 claude plugin test clawd-wander
 ```
+
+振る舞いの仕様はリポジトリ直下の `.scratch/` にある。

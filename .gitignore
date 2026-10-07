@@ -2,6 +2,3 @@
 **/.claude-plugin/types/
 /*/tsconfig.json
 .DS_Store
-
-# 作業メモ（仕様・チケット）はローカルにだけ置く
-.scratch/
