@@ -19,3 +19,4 @@ claude plugin test clawd-wander
 ```
 
 振る舞いの仕様はリポジトリ直下の `.scratch/` にある。
+README の GIF は [vhs](https://github.com/charmbracelet/vhs) で撮っている。撮り直す手順は `screenshots/clawd-wander.tape` の冒頭にある。
