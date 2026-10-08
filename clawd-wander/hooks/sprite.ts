@@ -8,6 +8,7 @@ import type { Heading } from './parade'
 import { PROP_GAP, propPixels, type PropId } from './props'
 import { surfPixels } from './surf'
 import { confettiPixels } from './cheer'
+import { flatten } from './squash'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -37,6 +38,8 @@ export type Actor = {
   readonly surf?: { readonly heading: Heading; readonly fade: number }
   /** 紙吹雪（.scratch/cheer/spec.md）。left は残りコマ */
   readonly confetti?: { readonly left: number }
+  /** 会話の圧縮で押しつぶされている（.scratch/squash/spec.md の R2）。つぶれた絵（幅 + 2）で描く */
+  readonly squashed?: true
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
@@ -107,7 +110,8 @@ export function paint(actors: readonly Actor[], columns: number): string {
     const opacity = actor.opacity ?? 1
     // surf の R9: 波乗りの間は 1 ピクセル浮かせ、脚の行（最下行）を描かない
     const lift = actor.surf !== undefined ? 1 : (actor.lift ?? 0)
-    const bitmap = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
+    const drawn = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
+    const bitmap = actor.squashed ? flatten(drawn) : drawn
     bitmap.forEach((line, sy) =>
       line.forEach((on, dx) => {
         const x = actor.x + dx

@@ -24,8 +24,11 @@ import {
   release,
   setMain,
   STARTLE_FRAMES,
+  squeeze,
   sync,
   timingOf,
+  unsqueeze,
+  wantsMain,
   wield,
 } from '../hooks/crew'
 import { begin, record, slot, TRAIL } from '../hooks/parade'
@@ -36,6 +39,7 @@ import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/spr
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 import { EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
+import { flatten, SPRING_FRAMES } from '../hooks/squash'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -2288,3 +2292,190 @@ test('cheer R1・R3・register: テストの Bash が成功したときだけ紙
   expect(await confettiAfter({ tool: 'Bash', command: 'npm test' })).toBe(true) // R1
   await ui.unmount()
 })
+
+// ---- 会話の圧縮でぺしゃんこ（.scratch/squash/spec.md） --------------------------------
+
+test('squash R2・契約 flatten: 下 3 行に縮み、左右に 1 ピクセル広がる', () => {
+  const art = MASCOTS.clawd.draw('front', 'stand')
+  const flat = flatten(art)
+  expect(flat.length).toBe(MASCOT_HEIGHT)
+  expect(flat[0]!.length).toBe(art[0]!.length + 2)
+  expect(flat.slice(0, 3).flat().some(Boolean)).toBe(false)
+  const lit = (rows: boolean[][]) => rows.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
+  expect(Math.min(...lit(flat))).toBe(Math.min(...lit(art))) // 左に 1 広がる（描くときに 1 左へずらす）
+  expect(Math.max(...lit(flat))).toBe(Math.max(...lit(art)) + 2) // 右に 1 広がる
+})
+
+test('squash R2・R3・S1・S6・S11: 押しつぶされている間は歩かず道具・記号を描かず、終わると浮き 1・1・0・1・0 で戻って途切れが 0 に戻る', () => {
+  const held = wield(hereMain(50), MAIN, 'Edit')
+  const pressed = squeeze(held, MAIN)
+  const actor = actors(pressed)[0]!
+  expect(actor).toMatchObject({ squashed: true, x: 49 })
+  expect(actor.prop).toBeUndefined()
+  expect(actor.emote).toBeUndefined()
+  expect(actors(poke(pressed, MAIN, true))[0]!.emote).toBeUndefined() // 驚いても記号は描かない
+  const later = advanceBy(pressed, 30, 200)
+  expect(later[0]!.wanderer.x).toBe(50) // 歩かない
+  expect(later[0]!.idle).toBeGreaterThan(0)
+  const released = unsqueeze(later, MAIN)
+  expect(released[0]!.squash).toEqual({ kind: 'spring', left: SPRING_FRAMES })
+  expect(released[0]!.idle).toBe(0)
+  const lifts = [0, 1, 2, 3, 4].map(i => actors(advanceBy(released, i, 200))[0]!.lift ?? 0)
+  expect(lifts).toEqual([1, 1, 0, 1, 0])
+  const settled = advanceBy(released, SPRING_FRAMES, 200)
+  expect(settled[0]!.squash).toBeNull()
+  expect(advanceBy(settled, 1, 200)[0]!.wanderer.x).not.toBe(50) // また歩く
+})
+
+test('squash R4・R5・R6・S2・S8: 押しつぶしの間は行列・波乗りを始めず乗っている波乗りはやめ、引っ込められるとやめ、押しつぶされていなければ終わりで何もしない', () => {
+  expect(paddleOut(squeeze(soloMain(), MAIN), () => 0, 200)[0]!.surf).toBeNull()
+  expect(advance(squeeze(surfing(), MAIN), 200, () => 0.5)[0]!.surf).toBeNull()
+  const friends = sync(hereMain(), ['a'], () => 0, 200).map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
+  expect(lineUp(squeeze(friends, MAIN), () => 0, 200)[0]!.parade).toBeNull()
+  expect(advance(setMain(squeeze(hereMain(), MAIN), false), 200, () => 0.5)[0]!.squash).toBeNull() // R5
+  const plain = hereMain()
+  expect(unsqueeze(plain, MAIN)).toEqual(plain) // R6
+  expect(squeeze(plain, 'nobody')).toEqual(plain)
+})
+
+/** 圧縮をテストから起こすためのプラグイン（会話を足す役と、CompactNow の呼び出しを合図に圧縮を起こす役） */
+const COMPACTION = {
+  ...NO_SURF,
+  plugins: [
+    {
+      name: 'transcript',
+      tier: 'prepend',
+      // テストから起こす圧縮には会話（messages）が付かないので、1 通だけの会話を足して下へ渡す（実際のセッションでは必ず付く）
+      register(on) {
+        on('session.compact', async ($, e, next) => next({ ...e, messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never))
+      },
+    },
+    {
+      name: 'compactor',
+      tier: 'prepend',
+      // 圧縮を起こす役。$.session.compact は呼んだプラグインのフックを通らないので、テスト（＝clawd-wander の $）からではなく、
+      // 別のプラグインから起こす。CompactNow という名前のツール呼び出しを合図にする
+      register(on) {
+        on('tool.call', async ($, e, next) => {
+          if ((e as { tool: string }).tool !== 'CompactNow') return next(e)
+          // 呼び出しの最中（ターンの途中）には圧縮できないので、呼び出しを返してから起こす
+          $.clock.after(10, () => {
+            $.session.compact({ instructions: 'test' }).catch(() => undefined)
+          })
+          return { result: 'ok' } as never
+        })
+      },
+    },
+  ],
+}
+
+test(
+  'squash R1・R3・register: 会話の圧縮の間は帯の下半分だけに描かれ、終わると元の高さに戻る',
+  COMPACTION,
+  async ($, on) => {
+    const clock = mock.clock(on)
+    beneath(on)
+    on('agent.list', async () => ({ value: [] }))
+    let finish: (result: unknown) => void = () => undefined
+    on('session.compact', () => new Promise(resolve => (finish = resolve)) as never)
+    const frames: string[] = []
+    on('ui.blit', async (_$, e) => {
+      if ('cells' in e) frames.push(e.cells)
+      return { value: {} }
+    })
+    const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+    await clock.advance(1500) // 現れきる
+    /** 最後のコマで、上 3 行のピクセルに何か描かれているか */
+    const tall = () => pixels(decode(frames[frames.length - 1]!, 40).lines).slice(0, 3).flat().some(Boolean)
+    expect(tall()).toBe(true)
+    await $.tool.call({ tool: 'CompactNow' } as never)
+    await clock.advance(500)
+    expect(tall()).toBe(false) // 押しつぶされて下 3 行だけ
+    finish({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+    await clock.advance(1000)
+    expect(tall()).toBe(true) // 戻った
+    await ui.unmount()
+  },
+)
+
+test('squash R1・R5・S1: まだ現れていない本体も押しつぶし、押しつぶされたまま現れる。引っ込められたらやめる', () => {
+  const pressed = squeeze(assemble(), MAIN)
+  expect(pressed[0]!.squash).toEqual({ kind: 'pressed' })
+  const appeared = advanceBy(setMain(pressed, true), FADE_FRAMES, 200)
+  expect(appeared[0]!.presence.kind).toBe('here')
+  expect(actors(appeared)[0]).toMatchObject({ squashed: true })
+  expect(advance(setMain(appeared, false), 200, () => 0.5)[0]!.squash).toBeNull() // 引っ込められたらやめる
+})
+
+test(
+  'squash R1・register: 本体が現れる前に圧縮が始まっても（/compact と同じ順番）、押しつぶされて現れる',
+  COMPACTION,
+  async ($, on) => {
+    const clock = mock.clock(on)
+    beneath(on)
+    on('agent.list', async () => ({ value: [] }))
+    let finish: (result: unknown) => void = () => undefined
+    on('session.compact', () => new Promise(resolve => (finish = resolve)) as never)
+    const frames: string[] = []
+    on('ui.blit', async (_$, e) => {
+      if ('cells' in e) frames.push(e.cells)
+      return { value: {} }
+    })
+    const ui = await $.ui.mount({ ...band(false, 40), surface: 'terminal' }) // まだ作業していない（本体は消えきっている）
+    await $.tool.call({ tool: 'CompactNow' } as never)
+    await clock.advance(100)
+    await ui.redraw(bandProps(true, 40)) // 作業が始まり、本体が現れる
+    await clock.advance(2000)
+    const tall = () => pixels(decode(frames[frames.length - 1]!, 40).lines).slice(0, 3).flat().some(Boolean)
+    expect(frames.length).toBeGreaterThan(0)
+    expect(tall()).toBe(false) // 押しつぶされて現れた
+    finish({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+    await clock.advance(1000)
+    expect(tall()).toBe(true)
+    await ui.unmount()
+  },
+)
+
+test('squash R7・契約 wantsMain: 押しつぶし・戻りの間は作業していなくても本体を出し、戻りきったら出さない', () => {
+  const plain = hereMain()
+  expect(wantsMain(plain, true)).toBe(true)
+  expect(wantsMain(plain, false)).toBe(false)
+  expect(wantsMain(sync(plain, ['a'], () => 0, 200), false)).toBe(true) // 仲間が動いている（always の R1）
+  const pressed = squeeze(plain, MAIN)
+  expect(wantsMain(pressed, false)).toBe(true)
+  const springing = unsqueeze(pressed, MAIN)
+  expect(wantsMain(springing, false)).toBe(true)
+  expect(wantsMain(advanceBy(springing, SPRING_FRAMES, 200), false)).toBe(false)
+})
+
+test('squash R7・register: 作業が終わってから圧縮が終わっても、ぽよんと戻ってから消える', COMPACTION, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  let finish: (result: unknown) => void = () => undefined
+  on('session.compact', () => new Promise(resolve => (finish = resolve)) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  await $.tool.call({ tool: 'CompactNow' } as never)
+  await clock.advance(300)
+  await ui.redraw(bandProps(false, 40)) // 作業が終わる（圧縮はまだ続いている）
+  await clock.advance(1000)
+  const lit = (cells: string) => pixels(decode(cells, 40).lines).flat().filter(Boolean).length
+  const topLit = (cells: string) => pixels(decode(cells, 40).lines).slice(0, 3).flat().some(Boolean)
+  expect(lit(frames[frames.length - 1]!)).toBeGreaterThan(20) // 作業が終わっても、つぶれたまま出ている
+  expect(topLit(frames[frames.length - 1]!)).toBe(false)
+  const ended = frames.length
+  finish({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })
+  await clock.advance(3000)
+  const after = frames.slice(ended)
+  // 戻る間は元の高さで描かれ（浮きつき）、そのあと跳ねて消えていく
+  expect(after.slice(0, 6).some(cells => topLit(cells) && lit(cells) > 30)).toBe(true)
+  expect(lit(after[after.length - 1]!)).toBe(0)
+  await ui.unmount()
+})
+

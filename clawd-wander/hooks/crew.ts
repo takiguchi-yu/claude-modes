@@ -8,7 +8,7 @@
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
 // 本体がひとりのときは、ときどき波乗りする（paddleOut・ride。.scratch/surf/spec.md）。
-// テストが通ると紙吹雪を降らせる（celebrate。.scratch/cheer/spec.md）。
+// テストが通ると紙吹雪を降らせ（celebrate。.scratch/cheer/spec.md）、会話の圧縮の間はぺしゃんこになる（squeeze・unsqueeze。.scratch/squash/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
 
@@ -19,6 +19,7 @@ import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
 import { catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
 import { CHEER_FRAMES } from './cheer'
+import { liftOf, PRESSED, settle, type Squash, unpress } from './squash'
 import { poseOf, start, step, type Wanderer } from './wander'
 
 export const MAIN = 'main'
@@ -49,6 +50,8 @@ export type Member = {
   readonly surf: Surf | null
   /** 紙吹雪の残りコマ数。0 なら降っていない（.scratch/cheer/spec.md） */
   readonly cheer: number
+  /** 会話の圧縮で押しつぶされている・戻っている。null ならふつう（.scratch/squash/spec.md） */
+  readonly squash: Squash | null
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
@@ -97,7 +100,7 @@ const PARADE_PAUSE = { min: 5, max: 15 }
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0 },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0, squash: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -106,6 +109,12 @@ export const agentCount = (crew: Crew): number => crew.length - 1
 /** サブエージェントの仲間が動いているか（現れかけ・いる。消えかけは含まない。.scratch/always/spec.md R1） */
 export const hasFriends = (crew: Crew): boolean =>
   crew.slice(1).some(m => m.presence.kind === 'arriving' || m.presence.kind === 'here')
+
+/**
+ * 本体を出すか（.scratch/always/spec.md の R1）。作業中か、仲間が動いているか、本体が押しつぶされている・戻っている
+ * （.scratch/squash/spec.md の R7。`/compact` は圧縮と作業が同時に終わるので、戻ってから消えるように）なら出す
+ */
+export const wantsMain = (crew: Crew, isWorking: boolean): boolean => isWorking || hasFriends(crew) || (crew[0]?.squash ?? null) !== null
 
 /** 帯に描くものが 1 体でも残っているか（現れかけ・消えかけを含む） */
 export const isVisible = (crew: Crew): boolean => crew.some(m => m.presence.kind !== 'gone')
@@ -124,11 +133,19 @@ const roomFor = (mascot: MascotId, canvas: number) => Math.max(0, canvas - MASCO
 const between = (random: () => number, min: number, max: number) => min + Math.floor(random() * (max - min + 1))
 
 /** 歩けるか: いる・驚いていない・居眠りしていない（デシジョンテーブル T4） */
-const canWalk = (m: Member, timing: Timing) => m.presence.kind === 'here' && m.startle === 0 && m.idle < timing.dozeFrames
+// squash の R2・R4: 押しつぶされている・戻っている間も歩かない
+const canWalk = (m: Member, timing: Timing) =>
+  m.presence.kind === 'here' && m.startle === 0 && m.idle < timing.dozeFrames && m.squash === null
 
 /** 出している記号の種類。驚きが居眠りより先（actors と同じ）。出入りの途中・記号なしは null */
 const emoteOf = (m: Member, timing: Timing): Emote['kind'] | null =>
-  look(m.presence) !== null ? null : m.startle > 0 ? 'startle' : m.idle >= timing.dozeFrames ? 'doze' : null
+  look(m.presence) !== null || m.squash?.kind === 'pressed'
+    ? null
+    : m.startle > 0
+      ? 'startle'
+      : m.idle >= timing.dozeFrames
+        ? 'doze'
+        : null
 
 /** 0〜1 の乱数で配列から 1 つ選ぶ */
 const choose = <T>(items: readonly T[], random: () => number): T =>
@@ -169,7 +186,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0 }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0, squash: null }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -214,6 +231,8 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
       prop: presence.kind === 'gone' ? null : decay(m.prop),
       busy: presence.kind === 'gone' ? 0 : m.busy,
       cheer: Math.max(0, m.cheer - 1),
+      // squash の R5: 引っ込められたら（跳ねる・消えかけ）押しつぶしをやめる。消えきっている・現れかけの間は続け、戻りを 1 コマ進める
+      squash: presence.kind === 'leaping' || presence.kind === 'leaving' ? null : settle(m.squash),
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
@@ -404,6 +423,10 @@ export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
 function actorOf(m: Member, timing: Timing): Actor {
   const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color }
   const fading = look(m.presence)
+  if (fading === null && m.squash?.kind === 'pressed') {
+    // squash の R2: つぶれた絵（幅 + 2）を 1 ピクセル左から描く。道具・記号は描かない
+    return { ...base, x: base.x - 1, facing: 'front' as const, pose: 'stand' as const, squashed: true as const }
+  }
   if (fading === null && m.startle > 0) {
     // T2: 「!」を出す。最初の SHAKE_FRAMES コマは 1 コマごとに左右へ 1 ピクセル震える
     const shaking = m.startle > STARTLE_FRAMES - SHAKE_FRAMES
@@ -423,11 +446,14 @@ function actorOf(m: Member, timing: Timing): Actor {
   if (fading === null) {
     const pose = poseOf(m.wanderer)
     const facing = m.wanderer.facing
-    if (m.prop === null) return { ...base, facing, pose }
+    // squash の R3: 戻っている間は浮きを 1・1・0・1・0 にする（ぽよん）
+    const lift = liftOf(m.squash)
+    const spring = lift > 0 ? { lift } : {}
+    if (m.prop === null) return { ...base, facing, pose, ...spring }
     // props の T4: 向いている側に道具を持つ。ハンマーは脚のコマに合わせて上下する（R5・R6）
     const side = facing === 'left' ? ('left' as const) : ('right' as const)
     const raised = m.prop.kind === 'hammer' && pose === 'stepB'
-    return { ...base, facing, pose, prop: { kind: m.prop.kind, side, raised } }
+    return { ...base, facing, pose, ...spring, prop: { kind: m.prop.kind, side, raised } }
   }
   return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
 }
@@ -435,6 +461,19 @@ function actorOf(m: Member, timing: Timing): Actor {
 /** id の 1 体のテストが通った（cheer の R1）。紙吹雪を CHEER_FRAMES 降らせる。いない id・消えきっている 1 体では何もしない */
 export const celebrate = (crew: Crew, id: string): Crew =>
   crew.map(m => (m.id !== id || m.presence.kind === 'gone' ? m : { ...m, cheer: CHEER_FRAMES }))
+
+/**
+ * id の 1 体のループで会話の圧縮が始まった（squash の R1・S1・S5・S9）。押しつぶす。
+ * まだ現れていない本体も押しつぶす（`/compact` は本体が現れるのと同時に始まるため）。いない id では何もしない
+ */
+export const squeeze = (crew: Crew, id: string): Crew => crew.map(m => (m.id !== id ? m : { ...m, squash: PRESSED }))
+
+/**
+ * id の 1 体のループで会話の圧縮が終わった（squash の R3・S6）。押しつぶされていれば戻り始め、途切れを 0 に戻す。
+ * 押しつぶされていなければ何もしない（R6・S2・S10）
+ */
+export const unsqueeze = (crew: Crew, id: string): Crew =>
+  crew.map(m => (m.id !== id || m.squash?.kind !== 'pressed' ? m : { ...m, squash: unpress(m.squash), idle: 0 }))
 
 /**
  * id の 1 体のツールの呼び出しが始まった。動いている呼び出しの数を 1 増やす（emotes の R12）。

@@ -17,6 +17,7 @@
 //   編集系のツールならハンマー、調べる系なら虫めがね、Write は鉛筆、Agent は旗、待ちを始めるツールは砂時計、
 //   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒（/config で変えられる）持たせる。
 //   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。紙吹雪は .scratch/cheer/spec.md。
+// session.compact: 会話の圧縮の間、そのループのマスコットをぺしゃんこにする（.scratch/squash/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // 波乗り: 本体がひとりのときは、ときどき波に乗って帯を滑る（.scratch/surf/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
@@ -34,7 +35,6 @@ import {
   type Crew,
   disengage,
   engage,
-  hasFriends,
   isVisible,
   join,
   lineUp,
@@ -43,9 +43,12 @@ import {
   poke,
   release,
   setMain,
+  squeeze,
   sync,
   type Timing,
   timingOf,
+  unsqueeze,
+  wantsMain,
   wield,
 } from './crew'
 import { propFor } from './props'
@@ -123,12 +126,25 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // squash の R1・R3: 会話の圧縮の間、そのループのマスコットを押しつぶし、終わったら（取りやめ・例外でも）戻す。
+  // precompute は前もって計算するだけで会話は変わらないので、何もしない
+  on('session.compact', async ($, e, next) => {
+    if (e.trigger === 'precompute') return next(e)
+    const id = e.agentId ?? MAIN
+    crew = squeeze(crew, id)
+    try {
+      return await next(e)
+    } finally {
+      crew = unsqueeze(crew, id)
+    }
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const ui = $.ui.resolve(e)
     const { isWorking, hasSurvey, bodyColumns } = e.props
     lastWorking = isWorking
-    // 本体は、Claude が作業中か、サブエージェントが動いている間だけ出す（.scratch/always/spec.md）
-    crew = setMain(crew, isWorking || hasFriends(crew))
+    // 本体は、Claude が作業中か、サブエージェントが動いているか、圧縮でつぶれている・戻っている間だけ出す（.scratch/always/spec.md・.scratch/squash/spec.md の R7）
+    crew = setMain(crew, wantsMain(crew, isWorking))
     if (!isVisible(crew) || hasSurvey || !('Raster' in ui) || bodyColumns * 2 < WIDEST) {
       stage = null
       return next(e)
@@ -212,8 +228,8 @@ function refresh($: EngineInterface, list: readonly AgentInfo[]) {
     lastCanvas,
     timing,
   )
-  // 仲間がいなくなって Claude も作業していなければ、本体も消え始める
-  crew = setMain(crew, lastWorking || hasFriends(crew))
+  // 仲間がいなくなって Claude も作業しておらず、つぶれても戻ってもいなければ、本体も消え始める
+  crew = setMain(crew, wantsMain(crew, lastWorking))
   if (isVisible(crew) !== wasVisible) {
     $.ui.invalidate('ui.render')
   }
