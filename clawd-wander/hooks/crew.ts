@@ -4,7 +4,7 @@
 // 新しく来た仲間は、まだいない種類の絵でランダムな位置に現れる。
 // 現れるときは上から降りながら、いなくなるときは浮き上がりながら、その場でふわっと出入りする
 // （出入りの状態遷移は presence.ts）。現れかけ・消えかけの間は歩かない。
-// ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く（.scratch/emotes/spec.md）。
+// ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く。呼び出しが動いている間（engage〜disengage）は眠らない（.scratch/emotes/spec.md）。
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
@@ -31,8 +31,10 @@ export type Member = {
   readonly wanderer: Wanderer
   /** 出入りの状態。'gone' のまま顔ぶれに残るのは本体だけ */
   readonly presence: Presence
-  /** 最後の活動（ツールの呼び出し）からのコマ数。いる間だけ数える */
+  /** 最後の活動（ツールの呼び出し）からのコマ数。いる間で、動いている呼び出しが無いときだけ数える */
   readonly idle: number
+  /** 動いているツールの呼び出しの数（どのツールでも。emotes の R12） */
+  readonly busy: number
   /** 驚きの残りコマ数。0 なら驚いていない */
   readonly startle: number
   /** 手に持っている道具。持っていなければ null（.scratch/props/spec.md） */
@@ -85,7 +87,7 @@ const PARADE_PAUSE = { min: 5, max: 15 }
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, startle: 0, prop: null, parade: null },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -100,9 +102,9 @@ export const isVisible = (crew: Crew): boolean => crew.some(m => m.presence.kind
 
 const shown = (m: Member): Member => ({ ...m, presence: appear(m.presence) })
 const hidden = (m: Member): Member => {
-  // props の R14: 現れかけたばかりで引っ込めると、その場で消えきる。そのときは道具もしまう
+  // props の R14・emotes の R13: 現れかけたばかりで引っ込めると、その場で消えきる。そのときは道具をしまい、呼び出しも数え直す
   const presence = retreat(m.presence)
-  return { ...m, presence, prop: presence.kind === 'gone' ? null : m.prop }
+  return presence.kind === 'gone' ? { ...m, presence, prop: null, busy: 0 } : { ...m, presence }
 }
 
 /** 置ける x の最大（ピクセル）。帯の幅 `canvas` から絵の幅を引いたもの */
@@ -157,7 +159,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, startle: 0, prop: null, parade: null }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -194,10 +196,12 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
       ...m,
       wanderer: walks ? step(m.wanderer, roomFor(m.mascot, canvas), random) : m.wanderer,
       presence,
-      idle: isHere ? m.idle + 1 : 0,
+      // emotes の R11: 呼び出しが動いている間は途切れを数えない（眠らない）
+      idle: isHere && m.busy === 0 ? m.idle + 1 : 0,
       startle: Math.max(0, m.startle - 1),
-      // props の R14: 消えきったら、使っている呼び出しが残っていても道具をしまう
+      // props の R14・emotes の R13: 消えきったら、使っている呼び出しが残っていても道具をしまい、呼び出しも数え直す
       prop: presence.kind === 'gone' ? null : decay(m.prop),
+      busy: presence.kind === 'gone' ? 0 : m.busy,
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
@@ -357,6 +361,20 @@ export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
       return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
     })
 }
+
+/**
+ * id の 1 体のツールの呼び出しが始まった。動いている呼び出しの数を 1 増やす（emotes の R12）。
+ * いない id・消えきっている 1 体では何もしない
+ */
+export const engage = (crew: Crew, id: string): Crew =>
+  crew.map(m => (m.id !== id || m.presence.kind === 'gone' ? m : { ...m, busy: m.busy + 1 }))
+
+/**
+ * id の 1 体のツールの呼び出しが終わった。動いている呼び出しの数を 1 減らす（0 より下げない。emotes の R12）。
+ * いない id では何もしない
+ */
+export const disengage = (crew: Crew, id: string): Crew =>
+  crew.map(m => (m.id !== id ? m : { ...m, busy: Math.max(0, m.busy - 1) }))
 
 /**
  * id の 1 体に活動があった（ツールの呼び出しが始まった・終わった）。途切れを 0 に戻し、

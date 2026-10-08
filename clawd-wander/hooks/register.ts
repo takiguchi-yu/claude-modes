@@ -13,7 +13,7 @@
 // 見張り（keepAlive）: タイマーは黙って終わることがある（$.clock.every は 1 回拒否されると終わる）。
 //   タイマーは 1 秒ごとに鼓動（lastBeat）を残す。帯の描き直しとツール呼び出しのたびに、
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
-// tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
+// tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く。呼び出しが動いている間は眠らない）。
 //   編集系のツールならハンマー、調べる系なら虫めがね、Write は鉛筆、Agent は旗、待ちを始めるツールは砂時計、
 //   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒（/config で変えられる）持たせる。
 //   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。
@@ -30,6 +30,8 @@ import {
   advance,
   assemble,
   type Crew,
+  disengage,
+  engage,
   hasFriends,
   isVisible,
   join,
@@ -91,13 +93,13 @@ export const register: Register = (on, options) => {
     const id = e.agentId ?? MAIN
     // Bash はコマンドの中身で道具を決める（テストを走らせるならフラスコ。props の R20）
     const command = e.tool === 'Bash' ? e.command : undefined
-    crew = wield(poke(crew, id, false), id, e.tool, command, timing)
+    crew = engage(wield(poke(crew, id, false), id, e.tool, command, timing), id)
     // 1 つの呼び出しは 1 回だけ使い終える。中断されたらその時点で（props の R16）、例外で抜けても（R13）
     let ended = false
     const end = () => {
       if (ended) return
       ended = true
-      crew = release(crew, id, e.tool, command, timing)
+      crew = disengage(release(crew, id, e.tool, command, timing), id)
     }
     next.signal.addEventListener('abort', end, { once: true })
     // 付けた時点で中断済みなら、abort はもう届かない

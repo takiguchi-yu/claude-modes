@@ -8,7 +8,9 @@ import {
   assemble,
   type Crew,
   DEFAULT_TIMING,
+  disengage,
   DOZE_FRAMES,
+  engage,
   isVisible,
   join,
   lineUp,
@@ -1926,5 +1928,56 @@ test('config R2・register: prop_seconds = 3 なら、道具を使い終えて�
   expect(frames.slice(-20).some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(true) // 使い終えてから 0〜2 秒
   await clock.advance(2000)
   expect(frames.slice(-10).some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(false) // 3〜4 秒
+  await ui.unmount()
+})
+
+// ---- 呼び出しが動いている間は眠らない（.scratch/emotes/spec.md の R11〜R13） ----------------
+
+test('emotes R11〜R13・engage・disengage: 呼び出しが動いている間は眠らず、終わってから数え始める', () => {
+  const busy = engage(hereMain(), MAIN)
+  expect(busy[0]!.busy).toBe(1)
+  const long = advanceBy(busy, DOZE_FRAMES * 2, 200)
+  expect(long[0]!.idle).toBe(0) // R11: 途切れを数えない
+  expect(actors(long)[0]!.pose).not.toBe('sleep')
+  const done = disengage(long, MAIN)
+  expect(done[0]!.busy).toBe(0)
+  expect(actors(advanceBy(done, DOZE_FRAMES - 1, 200))[0]!.pose).not.toBe('sleep')
+  expect(actors(advanceBy(done, DOZE_FRAMES, 200))[0]).toMatchObject({ pose: 'sleep', emote: { kind: 'doze' } })
+  expect(disengage(done, MAIN)[0]!.busy).toBe(0) // R12: 0 より下げない
+  expect(engage(busy, 'nobody')).toEqual(busy) // いない id では数えない
+  expect(engage(assemble(), MAIN)[0]!.busy).toBe(0) // 消えきっている 1 体では数えない
+  const gone = advanceBy(setMain(engage(busy, MAIN), false), LEAP_FRAMES + FADE_FRAMES + 1, 200)
+  expect(gone[0]!.presence.kind).toBe('gone')
+  expect(gone[0]!.busy).toBe(0) // R13: 消えきると 0
+  const snapshot = JSON.stringify(busy)
+  engage(busy, MAIN)
+  disengage(busy, MAIN)
+  expect(JSON.stringify(busy)).toBe(snapshot) // crew を変更しない
+})
+
+test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { doze_seconds: 2 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  let finish: (result: unknown) => void = () => undefined
+  on('tool.call', () => new Promise(resolve => (finish = resolve)) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const asleep = () => decode(frames[frames.length - 1]!, 60).lines.join('').includes('z')
+  const call = $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(6000) // 居眠りの 2 秒の 3 倍
+  expect(asleep()).toBe(false)
+  expect(frames.slice(-50).some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(true)
+  finish({ result: 'ok' })
+  await call
+  await clock.advance(1500)
+  expect(asleep()).toBe(false) // 終わってから 1.5 秒はまだ起きている
+  await clock.advance(1000)
+  expect(asleep()).toBe(true) // 2.5 秒で眠る
   await ui.unmount()
 })
