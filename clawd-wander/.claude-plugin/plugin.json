@@ -15,10 +15,10 @@
       "description": "How long Clawd keeps holding a tool after using it, in seconds (1-3600).",
       "default": 10
     },
-    "surf": {
+    "play": {
       "type": "boolean",
-      "title": "Surf",
-      "description": "When Clawd is alone, he now and then rides a wave across the band.",
+      "title": "Solo play",
+      "description": "When Clawd is alone, he now and then surfs, dances, or chases a butterfly.",
       "default": true
     }
   }

@@ -1,13 +1,12 @@
-// 本体の Clawd の波乗り。いつ乗るか・どう動くかは crew.ts が決め、ここは状態の進め方と、板・水面・波の絵を持つ。
+// 本体の Clawd の波乗り（ひとり遊びの 1 つ。.scratch/play/spec.md）。いつ乗るかは play.ts と crew.ts、どう動くかは crew.ts が決め、
+// ここは状態の進め方と、板・水面・波の絵を持つ。
 //
 // 乗っている間（ebb が null）は向かう側へ滑り、端に着くと波が引き（ebb が残りコマ）、引ききると降りる。
 // 仕様は .scratch/surf/spec.md。顔ぶれも描画も Claude Code の API も知らない。
 
 import type { Heading } from './parade'
 
-/** 波乗りを始める確率（1 コマあたり。間隔は決まっておらず、平均でおよそ 1 分に 1 回。R1） */
-export const SURF_CHANCE = 1 / 600
-/** 向かう側の奥行きがこれ以上あるときだけ始める（ピクセル。R1） */
+/** 向かう側の奥行きがこれ以上あるときだけ始める（ピクセル。.scratch/play/spec.md の R2） */
 export const MIN_RIDE = 30
 /** 乗っている間に 1 コマで進むピクセル数（R2） */
 export const SURF_PACE = 3

@@ -7,7 +7,7 @@
 // ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く。呼び出しが動いている間（engage〜disengage）は眠らない（.scratch/emotes/spec.md）。
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
-// 本体がひとりのときは、ときどき波乗りする（paddleOut・ride。.scratch/surf/spec.md）。
+// 本体がひとりのときは、ときどきひとり遊び（波乗り・小踊り・蝶々）をする（startPlay・playStep。.scratch/play/spec.md）。
 // テストが通ると紙吹雪を降らせ（celebrate。.scratch/cheer/spec.md）、会話の圧縮の間はぺしゃんこになる（squeeze・unsqueeze。.scratch/squash/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
@@ -17,7 +17,10 @@ import { begin, type Heading, type Parade, record, slot } from './parade'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
 import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
-import { catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
+import { catchWave, ebb, fadeOf, recede, SURF_PACE } from './surf'
+import { flutter, GAP, launch, scare, WIDTH as BUTTERFLY_WIDTH } from './butterfly'
+import { dancePose, startDance, stepDance } from './dance'
+import { type Play, PLAY_CHANCE, type PlayKind, playable } from './play'
 import { CHEER_FRAMES } from './cheer'
 import { liftOf, PRESSED, settle, type Squash, unpress } from './squash'
 import { poseOf, start, step, type Wanderer } from './wander'
@@ -46,8 +49,8 @@ export type Member = {
   readonly prop: Grip | null
   /** 率いている行列。本体だけが持ち、仲間は常に null（.scratch/parade/spec.md） */
   readonly parade: Parade | null
-  /** 波乗り。本体だけが持ち、仲間は常に null（.scratch/surf/spec.md） */
-  readonly surf: Surf | null
+  /** ひとり遊び（波乗り・小踊り・蝶々）。本体だけが持ち、仲間は常に null（.scratch/play/spec.md） */
+  readonly play: Play | null
   /** 紙吹雪の残りコマ数。0 なら降っていない（.scratch/cheer/spec.md） */
   readonly cheer: number
   /** 会話の圧縮で押しつぶされている・戻っている。null ならふつう（.scratch/squash/spec.md） */
@@ -92,15 +95,17 @@ const PARADE_FRAMES = { min: 80, max: 150 }
  */
 const PARADE_GAP = 2
 const FOLLOW_PACE = 4
-/** 波乗りを終えたあと、本体が立ち止まるコマ数の範囲（surf の R5） */
-const SURF_PAUSE = { min: 5, max: 15 }
+/** ひとり遊びを終えたあと、本体が立ち止まるコマ数の範囲（play の R6） */
+const PLAY_PAUSE = { min: 5, max: 15 }
+/** 蝶々を追うとき、本体が 1 コマに進めるピクセル数（butterfly の R3） */
+const CHASE_PACE = 3
 /** 行列が終わったあと、仲間が立ち止まるコマ数の範囲 */
 const PARADE_PAUSE = { min: 5, max: 15 }
 
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0, squash: null },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -186,7 +191,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0, squash: null }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -217,8 +222,8 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
     const isHere = m.presence.kind === 'here'
     // デシジョンテーブル T2〜T4: 驚いている・居眠りしている間は歩かない。
     // 行列の間は本体も仲間も自分では歩かず、march で進む
-    // surf の R2: 波乗りの間は自分では歩かず、ride で進む
-    const walks = canWalk(m, timing) && !marching && m.surf === null
+    // play: ひとり遊びの間は自分では歩かず、playStep で動く
+    const walks = canWalk(m, timing) && !marching && m.play === null
     const presence = elapse(m.presence)
     return {
       ...m,
@@ -238,50 +243,119 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
   const [main, ...friends] = kept
   if (main === undefined) return kept
-  if (main.surf !== null) return [ride(main, friends.length > 0, canvas, random, timing), ...friends]
+  if (main.play !== null) return [playStep(main, friends.length > 0, canvas, random, timing), ...friends]
   return marching ? march(kept, canvas, random, timing) : kept
 }
 
+/** 帯の広いほう（同じなら右）。本体が x にいて、置ける x の最大が room のとき */
+const widerSide = (x: number, room: number): Heading => (room - x >= x ? 'right' : 'left')
+
 /**
- * ひとりで歩ける本体が、行列も波乗りもしていないコマに、向かう側（帯の広いほう）の奥行きが MIN_RIDE 以上あれば、
- * SURF_CHANCE の確率で波乗りを始める（.scratch/surf/spec.md の R1・T2〜T7）。条件を満たさないときは random を呼ばない。
- * 設定で波乗りが止められている（T1）なら、呼び出し元が呼ばない
- * `canvas` は帯の幅（ピクセル）
+ * ひとりで歩ける本体が、行列もひとり遊びもしていないコマに、始められる遊びがあれば、PLAY_CHANCE の確率で、
+ * 始められる遊びから 1 つを乱数で選んで始める（.scratch/play/spec.md の R1・R2・T2〜T7）。条件を満たさないときは random を呼ばない。
+ * 設定でひとり遊びが止められている（T1）なら、呼び出し元が呼ばない。`canvas` は帯の幅（ピクセル）
  */
-export function paddleOut(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
+export function startPlay(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const [main, ...friends] = crew
-  if (main === undefined || friends.length > 0 || !canWalk(main, timing) || main.parade !== null || main.surf !== null) return crew
+  if (main === undefined || friends.length > 0 || !canWalk(main, timing) || main.parade !== null || main.play !== null) return crew
+  const kinds = playable(main.wanderer.x, roomFor(main.mascot, canvas))
+  if (kinds.length === 0) return crew
+  if (random() >= PLAY_CHANCE) return crew
+  const kind = kinds[Math.min(kinds.length - 1, Math.floor(random() * kinds.length))]!
+  return beginPlay(crew, kind, canvas)
+}
+
+/** 本体に遊び `kind` を始めさせる（各遊びの仕様の始め方）。`canvas` は帯の幅（ピクセル） */
+export function beginPlay(crew: Crew, kind: PlayKind, canvas: number): Crew {
+  const [main, ...rest] = crew
+  if (main === undefined) return crew
   const x = main.wanderer.x
-  const room = roomFor(main.mascot, canvas)
-  const heading: Heading = room - x >= x ? 'right' : 'left'
-  if (Math.max(room - x, x) < MIN_RIDE) return crew
-  if (random() >= SURF_CHANCE) return crew
-  return [{ ...main, wanderer: { ...main.wanderer, facing: heading }, surf: catchWave(heading) }]
+  const heading = widerSide(x, roomFor(main.mascot, canvas))
+  const front = heading === 'right' ? x + MASCOTS[main.mascot].width : x
+  const play: Play =
+    kind === 'surf'
+      ? { kind, ...catchWave(heading) }
+      : kind === 'dance'
+        ? { kind, ...startDance() }
+        : { kind, ...launch(front, heading) }
+  // dance の R1: 小踊りはその場で止まる。波乗り・蝶々は向かう側を向く
+  const wanderer: Wanderer =
+    kind === 'dance' ? { ...main.wanderer, mode: 'pause', left: 1 } : { ...main.wanderer, facing: heading }
+  return [{ ...main, wanderer, play }, ...rest]
+}
+
+/** ひとり遊びを終え、少し立ち止まってから歩き出す（play の R6） */
+const settleDown = (main: Member, random: () => number): Member => ({
+  ...main,
+  play: null,
+  wanderer: { ...main.wanderer, mode: 'pause', left: between(random, PLAY_PAUSE.min, PLAY_PAUSE.max) },
+})
+
+/**
+ * ひとり遊びをしている本体を 1 コマ進める（.scratch/play/spec.md）。`crowded` は仲間が顔ぶれにいるか。
+ * 歩けなくなった・引っ込められたら、どの遊びもその場でやめる（R4）。それ以外は遊びごとに進める
+ */
+function playStep(main: Member, crowded: boolean, canvas: number, random: () => number, timing: Timing): Member {
+  const play = main.play!
+  if (!canWalk(main, timing)) return { ...main, play: null }
+  switch (play.kind) {
+    case 'surf':
+      return ride(main, play, crowded, canvas, random)
+    case 'dance': {
+      // dance の R6: 仲間が加わったらすぐやめる。R5: 踊り終えたら終わる
+      const next = crowded ? null : stepDance(play)
+      return next === null ? settleDown(main, random) : { ...main, play: { kind: 'dance', ...next } }
+    }
+    case 'butterfly':
+      return chase(main, play, crowded, canvas, random)
+  }
 }
 
 /**
- * 波乗りしている本体を 1 コマ進める（surf の R2〜R7・S4〜S10）。`crowded` は仲間が顔ぶれにいるか。
- * 乗っている間は向かう側へ SURF_PACE ピクセル進み、次で端を越えるならその場で止まって波を引かせる。
- * 引ききったら板から降りて立ち止まる。歩けなくなった・引っ込められたら、その場でやめる
+ * 波乗りしている本体を 1 コマ進める（surf の R2〜R6・S4〜S9）。
+ * 乗っている間は向かう側へ SURF_PACE ピクセル進み、次で端を越えるならその場で止まって波を引かせる。引ききったら板から降りる
  */
-function ride(main: Member, crowded: boolean, canvas: number, random: () => number, timing: Timing): Member {
-  const surf = main.surf!
-  // R7・S7・S10: 驚いた・居眠りした・引っ込められたら、その場でやめる
-  if (!canWalk(main, timing)) return { ...main, surf: null }
+function ride(main: Member, surf: Extract<Play, { kind: 'surf' }>, crowded: boolean, canvas: number, random: () => number): Member {
   // R6・S6: 乗っている間に仲間が加わったら、その場で止まって引かせ始める（引いている間はそのまま。S9）
-  if (crowded && surf.ebb === null) return { ...main, surf: ebb(surf) }
-  const current = surf
-  if (current.ebb === null) {
-    const next = main.wanderer.x + (current.heading === 'right' ? SURF_PACE : -SURF_PACE)
+  if (crowded && surf.ebb === null) return { ...main, play: { ...surf, ...ebb(surf) } }
+  if (surf.ebb === null) {
+    const next = main.wanderer.x + (surf.heading === 'right' ? SURF_PACE : -SURF_PACE)
     // R3・S5: 次で端を越えるなら、その場で止まって引かせる
-    if (next < 0 || next > roomFor(main.mascot, canvas)) return { ...main, surf: ebb(current) }
+    if (next < 0 || next > roomFor(main.mascot, canvas)) return { ...main, play: { ...surf, ...ebb(surf) } }
     // R2・S4: 向かう側へ進み、その向きを向く
-    return { ...main, wanderer: { ...main.wanderer, x: next, facing: current.heading, mode: 'walk', left: 1 } }
+    return { ...main, wanderer: { ...main.wanderer, x: next, facing: surf.heading, mode: 'walk', left: 1 } }
   }
-  const after = recede(current)
-  if (after !== null) return { ...main, surf: after }
+  const after = recede(surf)
   // R5・S8: 引ききったら板から降り、少し立ち止まってから歩き出す
-  return { ...main, surf: null, wanderer: { ...main.wanderer, mode: 'pause', left: between(random, SURF_PAUSE.min, SURF_PAUSE.max) } }
+  return after === null ? settleDown(main, random) : { ...main, play: { kind: 'surf', ...after } }
+}
+
+/**
+ * 蝶々を追いかけている本体を 1 コマ進める（butterfly の R2〜R6）。
+ * 蝶々が飛んでいる間は、前の端が蝶々の GAP 手前に来る位置へ 1 コマ CHASE_PACE ピクセルまで追う（追い越さない）。
+ * 飛び去っている・見送っている間は止まる。見送り終えたら終わる
+ */
+function chase(main: Member, b: Extract<Play, { kind: 'butterfly' }>, crowded: boolean, canvas: number, random: () => number): Member {
+  // R6・S3: 仲間が加わったら飛び去らせる（このコマは向きを変えるだけで、次のコマから昇る）
+  if (crowded && b.phase === 'fly') {
+    return { ...main, play: { kind: 'butterfly', ...scare(b) }, wanderer: { ...main.wanderer, facing: 'front', mode: 'pause', left: 1 } }
+  }
+  const next = flutter(b, canvas)
+  if (next === null) return settleDown(main, random)
+  const play: Play = { kind: 'butterfly', ...next }
+  if (next.phase !== 'fly') {
+    // R5: 止まって正面を向き、見送る
+    return { ...main, play, wanderer: { ...main.wanderer, facing: 'front', mode: 'pause', left: 1 } }
+  }
+  const width = MASCOTS[main.mascot].width
+  const target = next.heading === 'right' ? next.x - GAP - width : next.x + BUTTERFLY_WIDTH + GAP
+  const room = roomFor(main.mascot, canvas)
+  const x = main.wanderer.x
+  const goal = Math.min(Math.max(target, 0), room)
+  const dx = Math.min(Math.max(goal - x, -CHASE_PACE), CHASE_PACE)
+  // R3: 進んだコマは歩く脚。向かう側を向いたまま
+  const mode = dx === 0 ? ('pause' as const) : ('walk' as const)
+  return { ...main, play, wanderer: { ...main.wanderer, x: x + dx, facing: next.heading, mode, left: 1 } }
 }
 
 /**
@@ -307,8 +381,8 @@ function spacing(main: Member, followers: readonly Member[]): number[] {
  */
 export function lineUp(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const [main, ...friends] = crew
-  // surf の R11: 波乗りの間は行列を始めない
-  if (main === undefined || main.parade !== null || main.surf !== null || !canWalk(main, timing)) return crew
+  // play の R3: ひとり遊びの間は行列を始めない
+  if (main === undefined || main.parade !== null || main.play !== null || !canWalk(main, timing)) return crew
   const x = main.wanderer.x
   const room = roomFor(main.mascot, canvas)
   const heading: Heading = room - x >= x ? 'right' : 'left'
@@ -438,10 +512,19 @@ function actorOf(m: Member, timing: Timing): Actor {
     const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
     return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
   }
-  if (fading === null && m.surf !== null) {
-    // surf の R8・R9: 板に乗って向かう側を向く。道具は描かない
-    const surf = { heading: m.surf.heading, fade: fadeOf(m.surf) }
-    return { ...base, facing: m.surf.heading, pose: 'stand' as const, surf }
+  if (fading === null && m.play !== null) {
+    // ひとり遊びの間は道具を描かない（surf の R8・dance の R4・butterfly の R7）
+    switch (m.play.kind) {
+      case 'surf':
+        // surf の R9: 板に乗って向かう側を向く
+        return { ...base, facing: m.play.heading, pose: 'stand' as const, surf: { heading: m.play.heading, fade: fadeOf(m.play) } }
+      case 'dance':
+        // dance の R2・R3: バンザイと直立をくり返す
+        return { ...base, ...dancePose(m.play) }
+      case 'butterfly':
+        // butterfly の R3・R8: 追いかけて歩き（見送る間は正面で直立）、蝶々を描く
+        return { ...base, facing: m.wanderer.facing, pose: poseOf(m.wanderer), butterfly: m.play }
+    }
   }
   if (fading === null) {
     const pose = poseOf(m.wanderer)

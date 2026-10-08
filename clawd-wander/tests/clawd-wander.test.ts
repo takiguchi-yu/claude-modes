@@ -6,6 +6,7 @@ import {
   advance,
   agentCount,
   assemble,
+  beginPlay,
   celebrate,
   type Crew,
   DEFAULT_TIMING,
@@ -17,7 +18,6 @@ import {
   lineUp,
   MAIN,
   MAX_AGENTS,
-  paddleOut,
   type Member,
   PARADE_CHANCE,
   poke,
@@ -25,6 +25,7 @@ import {
   setMain,
   STARTLE_FRAMES,
   squeeze,
+  startPlay,
   sync,
   timingOf,
   unsqueeze,
@@ -37,7 +38,10 @@ import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
-import { EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
+import { EBB_FRAMES, MIN_RIDE, SURF_PACE, surfPixels } from '../hooks/surf'
+import { PLAY_CHANCE, playable } from '../hooks/play'
+import { DANCE_FRAMES, dancePose } from '../hooks/dance'
+import { butterflyPixels, CHASE_FRAMES, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 import { flatten, SPRING_FRAMES } from '../hooks/squash'
 
@@ -54,10 +58,10 @@ const bandProps = (isWorking: boolean, bodyColumns = 40) => ({
 })
 
 /**
- * 実際の帯を使うテストの設定。波乗りは乱数で始まり、テストから乱数は決められないので止める
- * （偶然の波乗りで道具が隠れないように。.scratch/surf/spec.md の R12）
+ * 実際の帯を使うテストの設定。ひとり遊びは乱数で始まり、テストから乱数は決められないので止める
+ * （偶然の遊びで道具が隠れないように。.scratch/play/spec.md の R5）
  */
-const NO_SURF = { options: { surf: false } }
+const NO_PLAY = { options: { play: false } }
 
 const band = (isWorking: boolean, bodyColumns = 40) => ({
   plugin: PLUGIN,
@@ -686,7 +690,7 @@ test('emotes の R4: 「!」は持ち主の色ではなく赤で描く', () => {
   }
 })
 
-test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', NO_SURF, async ($, on) => {
+test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -997,7 +1001,7 @@ test('R8・T1・T2・T3・T5: 驚き中・居眠り中・出入り中・道具�
   expect(actors(dozing)[0]!.prop).toBeUndefined()
 })
 
-test('register: Edit の呼び出しで本体がハンマーを持つ', NO_SURF, async ($, on) => {
+test('register: Edit の呼び出しで本体がハンマーを持つ', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1017,7 +1021,7 @@ test('register: Edit の呼び出しで本体がハンマーを持つ', NO_SURF,
   await ui.unmount()
 })
 
-test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', NO_SURF, async ($, on) => {
+test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1041,7 +1045,7 @@ test('register・R22: 4 つの道具はどれも、道具の色で帯に描か�
   await ui.unmount()
 })
 
-test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', NO_SURF, async ($, on) => {
+test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1081,7 +1085,7 @@ test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash �
 const heldLately = (frames: string[], before: number, columns: number) =>
   frames.slice(-50).some(cells => litCount(decode(cells, columns).lines) - before >= 8)
 
-test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', NO_SURF, async ($, on) => {
+test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1109,7 +1113,7 @@ test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち�
   await ui.unmount()
 })
 
-test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', NO_SURF, async ($, on) => {
+test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1135,7 +1139,7 @@ test('register・R13: 呼び出しが例外で抜けても、持ちっぱなし�
 test(
   'register・R16: 呼び出しが中断されたら、その時点で使い終えたとみなし、10 秒でしまう',
   {
-    ...NO_SURF,
+    ...NO_PLAY,
     plugins: [
       {
         name: 'interrupter',
@@ -1175,7 +1179,7 @@ test(
   },
 )
 
-test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', NO_SURF, async ($, on) => {
+test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1200,14 +1204,14 @@ test('register・R11・R8: 拒否されても使い終えたとみなし、驚�
 
 // ---- 帯への描画 ---------------------------------------------------------------
 
-test('Claude が待機中なら何も描かない', NO_SURF, async ($, on) => {
+test('Claude が待機中なら何も描かない', NO_PLAY, async ($, on) => {
   beneath(on)
   const ui = await $.ui.mount({ ...band(false), surface: 'terminal' })
   expect(await ui.find({ key: 'clawd' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', NO_SURF, async ($, on) => {
+test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', NO_PLAY, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
@@ -1218,7 +1222,7 @@ test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod �
   await ui.unmount()
 })
 
-test('作業中は歩き回り、作業が終わると止まる', NO_SURF, async ($, on) => {
+test('作業中は歩き回り、作業が終わると止まる', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1244,7 +1248,7 @@ test('作業中は歩き回り、作業が終わると止まる', NO_SURF, async
   await ui.unmount()
 })
 
-test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', NO_SURF, async ($, on) => {
+test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   let agents: AgentInfo[] = [agent('a1', 'running'), agent('a2', 'completed')]
@@ -1280,7 +1284,7 @@ test('R1: サブエージェントが動いている間は、本体の作業が�
   await ui.unmount()
 })
 
-test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', NO_SURF, async ($, on) => {
+test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   let renders = 0
   on('ui.render', async ($, e) => {
@@ -1307,7 +1311,7 @@ test('書き換えが続けて通らなくても止まらず、帯を描き直�
   await ui.unmount()
 })
 
-test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', NO_SURF, async ($, on) => {
+test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', NO_PLAY, async ($, on) => {
   let refuse = false
   // mock.clock も clock.every に掛かるので、こちらはアニメーションの 100ms 周期だけに絞る
   on('clock.every', { ms: 100 }, async (_$, e, next) => (refuse ? { deny: 'refused by the test' } : next(e)))
@@ -1339,7 +1343,7 @@ test('タイマーが黙って終わっても、次のツール呼び出しで�
   await ui.unmount()
 })
 
-test('Raster の無い画面では描かない', NO_SURF, async ($, on) => {
+test('Raster の無い画面では描かない', NO_PLAY, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true), surface: 'desktop' })
@@ -1874,7 +1878,7 @@ test('R23・S13〜S18・契約 grab・relax・decay: 持ち替えてから 15 �
   expect(decayBy(short, 3)).toBeNull()
 })
 
-test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', NO_SURF, async ($, on) => {
+test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1928,7 +1932,7 @@ test('config R1: 居眠りまでのコマ数を timing で渡すと、そのコ�
   expect(actors(crew)[0]!.pose).not.toBe('sleep') // 既定（60 秒）ならまだ起きている（R4）
 })
 
-test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { surf: false, doze_seconds: 2 } }, async ($, on) => {
+test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { play: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1946,7 +1950,7 @@ test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2
   await ui.unmount()
 })
 
-test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { surf: false, prop_seconds: 3 } }, async ($, on) => {
+test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { play: false, prop_seconds: 3 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1990,7 +1994,7 @@ test('emotes R11〜R13・engage・disengage: 呼び出しが動いている間�
   expect(JSON.stringify(busy)).toBe(snapshot) // crew を変更しない
 })
 
-test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { surf: false, doze_seconds: 2 } }, async ($, on) => {
+test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { play: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -2047,64 +2051,69 @@ const counted = (value: number) => {
 }
 
 /** 波に乗っている本体（x の位置から heading へ） */
-const surfing = (x = 50): Crew => paddleOut(soloMain(x), () => 0, 200)
+const surfing = (x = 50): Crew => beginPlay(soloMain(x), 'surf', 200)
 
-test('surf R1・T2〜T7・契約 paddleOut: 条件がそろったときだけ、帯の広いほうへ乗り出す', () => {
-  expect([SURF_CHANCE, MIN_RIDE, SURF_PACE, EBB_FRAMES]).toEqual([1 / 600, 30, 3, 6])
-  // T7: 広いほう（右）へ乗り出し、その向きを向く。乱数は 1 回
-  const hit = counted(0)
+test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえば始め、始められる遊びから乱数で選ぶ。T2〜T5 では乱数を使わない', () => {
+  expect([PLAY_CHANCE, MIN_RIDE, MIN_CHASE, SURF_PACE, EBB_FRAMES]).toEqual([1 / 600, 30, 60, 3, 6])
+  expect(playable(50, 182)).toEqual(['surf', 'dance', 'butterfly'])
+  expect(playable(20, 42)).toEqual(['dance']) // 広いほうの奥行き 22 では波乗りも蝶々もできない
+  expect(playable(10, 50)).toEqual(['surf', 'dance']) // 奥行き 40
+  // T7: 1 回目の乱数で始めるかを、2 回目でどれにするかを決める
   const crew = soloMain(50)
   const snapshot = JSON.stringify(crew)
-  const rode = paddleOut(crew, hit.random, 200)
+  for (const [pick, kind] of [[0, 'surf'], [0.5, 'dance'], [0.99, 'butterfly']] as const) {
+    const values = [0, pick]
+    let calls = 0
+    const started = startPlay(crew, () => values[calls++]!, 200)
+    expect(started[0]!.play?.kind).toBe(kind)
+    expect(calls).toBe(2)
+  }
   expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
-  expect(rode[0]!.surf).toEqual({ heading: 'right', ebb: null })
-  expect(rode[0]!.wanderer.facing).toBe('right')
-  expect(hit.calls()).toBe(1)
-  expect(paddleOut(soloMain(150), () => 0, 200)[0]!.surf?.heading).toBe('left') // 右が狭ければ左へ
-  // T6: 乱数が外れると始めない
-  const miss = counted(SURF_CHANCE)
-  expect(paddleOut(crew, miss.random, 200)).toBe(crew)
+  // 波乗り・蝶々は広いほうを向く。小踊りはその場で止まる
+  expect(beginPlay(soloMain(50), 'surf', 200)[0]!).toMatchObject({ play: { kind: 'surf', heading: 'right', ebb: null }, wanderer: { facing: 'right' } })
+  expect(beginPlay(soloMain(150), 'butterfly', 200)[0]!.play).toMatchObject({ kind: 'butterfly', heading: 'left' })
+  expect(beginPlay(soloMain(50), 'dance', 200)[0]!).toMatchObject({ play: { kind: 'dance', left: DANCE_FRAMES }, wanderer: { mode: 'pause' } })
+  // T6: 乱数が外れると始めない（乱数は 1 回）
+  const miss = counted(PLAY_CHANCE)
+  expect(startPlay(crew, miss.random, 200)).toBe(crew)
   expect(miss.calls()).toBe(1)
-  // T2〜T5: 始めず、乱数も使わない
+  // T2〜T4: 始めず、乱数も使わない
   const none = counted(0)
   const notAlone = sync(soloMain(), ['a'], () => 0, 200)
   const startled = poke(soloMain(), MAIN, true)
   const busy = surfing()
-  const cramped = soloMain(20)
-  for (const [c, canvas] of [[notAlone, 200], [startled, 200], [busy, 200], [cramped, 18 + 40]] as const) {
-    expect(paddleOut(c, none.random, canvas)).toBe(c)
-  }
+  for (const c of [notAlone, startled, busy]) expect(startPlay(c, none.random, 200)).toBe(c)
   expect(none.calls()).toBe(0)
 })
 
 test('surf R2〜R5・S4・S5・S8: 1 コマ 3 ピクセル滑り、端の手前で止まって 6 コマ引き、降りて立ち止まる', () => {
   const one = advance(surfing(50), 200, () => 0.5)
   expect(one[0]!.wanderer).toMatchObject({ x: 50 + SURF_PACE, facing: 'right' }) // S4
-  expect(one[0]!.surf).toEqual({ heading: 'right', ebb: null })
+  expect(one[0]!.play).toEqual({ kind: 'surf', heading: 'right', ebb: null })
   // S5: 次で端（置ける x の最大 182）を越えるなら、その場で止まって引き始める
   const nearEdge = surfing(50).map(m => ({ ...m, wanderer: { ...m.wanderer, x: 181 } }))
   const edge = advance(nearEdge, 200, () => 0.5)
   expect(edge[0]!.wanderer.x).toBe(181)
-  expect(edge[0]!.surf?.ebb).toBe(EBB_FRAMES)
+  expect(edge[0]!.play).toMatchObject({ kind: 'surf', ebb: EBB_FRAMES })
   // S8: 引いている間は動かず、6 コマで引ききって降りる
   const receding = advanceBy(edge, EBB_FRAMES - 1, 200)
-  expect(receding[0]!.surf?.ebb).toBe(1)
+  expect(receding[0]!.play).toMatchObject({ kind: 'surf', ebb: 1 })
   expect(receding[0]!.wanderer.x).toBe(181)
   const landed = advanceBy(edge, EBB_FRAMES, 200)
-  expect(landed[0]!.surf).toBeNull()
+  expect(landed[0]!.play).toBeNull()
   expect(landed[0]!.wanderer.mode).toBe('pause') // R5: 立ち止まってから歩き出す
 })
 
 test('surf R6・R7・R11・S6・S7: 仲間が来ると引き、驚く・居眠り・引っ込められるとやめ、波乗りの間は行列を始めない', () => {
   // S6: 仲間が加わると、その場で止まって引く
   const crowded = advance(sync(surfing(50), ['a'], () => 0, 200), 200, () => 0.5)
-  expect(crowded[0]!.surf?.ebb).toBe(EBB_FRAMES)
+  expect(crowded[0]!.play).toMatchObject({ kind: 'surf', ebb: EBB_FRAMES })
   expect(crowded[0]!.wanderer.x).toBe(50)
   // S7: 驚く・居眠りする・引っ込められると、その場でやめる
-  expect(advance(poke(surfing(), MAIN, true), 200, () => 0.5)[0]!.surf).toBeNull()
+  expect(advance(poke(surfing(), MAIN, true), 200, () => 0.5)[0]!.play).toBeNull()
   const sleepy = surfing().map(m => ({ ...m, idle: DOZE_FRAMES }))
-  expect(advance(sleepy, 200, () => 0.5)[0]!.surf).toBeNull()
-  expect(advance(setMain(surfing(), false), 200, () => 0.5)[0]!.surf).toBeNull()
+  expect(advance(sleepy, 200, () => 0.5)[0]!.play).toBeNull()
+  expect(advance(setMain(surfing(), false), 200, () => 0.5)[0]!.play).toBeNull()
   // R11: 波乗り（引いている間）は行列を始めない
   const withFriend = advanceBy(sync(surfing(50), ['a'], () => 0, 200), 1, 200)
   const here = withFriend.map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
@@ -2181,30 +2190,32 @@ test('surf R9・paint: 泡は、マスとの位置がどちらにずれても描
 })
 
 /**
- * ひとりの本体を `minutes` 分歩かせ、帯に板の色が出たか。居眠りしないよう、設定の居眠りまでの秒数を 3600 にして呼ぶ
+ * ひとりの本体を `minutes` 分歩かせ、帯に黄色（波乗りの板と蝶々の色）が出たか（ひとり遊びをしたか）。
+ * 小踊りだけでは黄色が出ないが、10 分の遊びがすべて小踊りになる確率は無視できる。
+ * 居眠りしないよう、設定の居眠りまでの秒数を 3600 にして呼ぶ
  * （終わらないツール呼び出しで起こしておく形は、呼び出しのフックが時間切れで外されるので使えない）
  */
-async function surfsWithin($: Parameters<Parameters<typeof test>[1]>[0], on: On, minutes: number): Promise<boolean> {
+async function playsWithin($: Parameters<Parameters<typeof test>[1]>[0], on: On, minutes: number): Promise<boolean> {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
-  let surfed = false
+  let played = false
   on('ui.blit', async (_$, e) => {
-    if ('cells' in e && cellColors(e.cells).has(BOARD)) surfed = true
+    if ('cells' in e && cellColors(e.cells).has(BOARD)) played = true
     return { value: {} }
   })
   const ui = await $.ui.mount({ ...band(true, 100), surface: 'terminal' })
   await clock.advance(minutes * 60_000)
   await ui.unmount()
-  return surfed
+  return played
 }
 
-test('surf R12・T1・register: surf が false なら、10 分ひとりで歩いても波乗りしない', { options: { surf: false, doze_seconds: 3600 } }, async ($, on) => {
-  expect(await surfsWithin($, on, 10)).toBe(false)
+test('play R5・T1・register: play が false なら、10 分ひとりで歩いてもひとり遊びをしない', { options: { play: false, doze_seconds: 3600 } }, async ($, on) => {
+  expect(await playsWithin($, on, 10)).toBe(false)
 })
 
-test('surf R1・R12・register: surf がオン（既定）なら、10 分ひとりで歩く間に波乗りする（しない確率は約 e⁻¹⁰）', { options: { doze_seconds: 3600 } }, async ($, on) => {
-  expect(await surfsWithin($, on, 10)).toBe(true)
+test('play R1・R5・register: play がオン（既定）なら、10 分ひとりで歩く間にひとり遊びをする', { options: { doze_seconds: 3600 } }, async ($, on) => {
+  expect(await playsWithin($, on, 10)).toBe(true)
 })
 
 // ---- テストが通ったら紙吹雪（.scratch/cheer/spec.md） --------------------------------
@@ -2266,7 +2277,7 @@ test('cheer R4・R5: 紙吹雪は道具や歩きに重ねて描き、出入り�
   expect([0, 1, 2, 3].some(i => hasConfetti(paint(actors(advanceBy(held, i, 200)), 40)))).toBe(true)
 })
 
-test('cheer R1・R3・register: テストの Bash が成功したときだけ紙吹雪を降らせる', NO_SURF, async ($, on) => {
+test('cheer R1・R3・register: テストの Bash が成功したときだけ紙吹雪を降らせる', NO_PLAY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -2328,8 +2339,8 @@ test('squash R2・R3・S1・S6・S11: 押しつぶされている間は歩かず
 })
 
 test('squash R4・R5・R6・S2・S8: 押しつぶしの間は行列・波乗りを始めず乗っている波乗りはやめ、引っ込められるとやめ、押しつぶされていなければ終わりで何もしない', () => {
-  expect(paddleOut(squeeze(soloMain(), MAIN), () => 0, 200)[0]!.surf).toBeNull()
-  expect(advance(squeeze(surfing(), MAIN), 200, () => 0.5)[0]!.surf).toBeNull()
+  expect(startPlay(squeeze(soloMain(), MAIN), () => 0, 200)[0]!.play).toBeNull()
+  expect(advance(squeeze(surfing(), MAIN), 200, () => 0.5)[0]!.play).toBeNull()
   const friends = sync(hereMain(), ['a'], () => 0, 200).map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
   expect(lineUp(squeeze(friends, MAIN), () => 0, 200)[0]!.parade).toBeNull()
   expect(advance(setMain(squeeze(hereMain(), MAIN), false), 200, () => 0.5)[0]!.squash).toBeNull() // R5
@@ -2340,7 +2351,7 @@ test('squash R4・R5・R6・S2・S8: 押しつぶしの間は行列・波乗り�
 
 /** 圧縮をテストから起こすためのプラグイン（会話を足す役と、CompactNow の呼び出しを合図に圧縮を起こす役） */
 const COMPACTION = {
-  ...NO_SURF,
+  ...NO_PLAY,
   plugins: [
     {
       name: 'transcript',
@@ -2477,5 +2488,117 @@ test('squash R7・register: 作業が終わってから圧縮が終わっても�
   expect(after.slice(0, 6).some(cells => topLit(cells) && lit(cells) > 30)).toBe(true)
   expect(lit(after[after.length - 1]!)).toBe(0)
   await ui.unmount()
+})
+
+// ---- ひとり遊び（.scratch/play/spec.md）・小踊り（.scratch/dance/spec.md）・蝶々（.scratch/butterfly/spec.md） ----
+
+const dancing = (x = 50): Crew => beginPlay(soloMain(x), 'dance', 200)
+const chasing = (x = 50): Crew => beginPlay(soloMain(x), 'butterfly', 200)
+
+test('play R3・R4・R6: 遊びの間は行列もほかの遊びも始めず、歩けなくなる・引っ込められるとやめ、終わると立ち止まる', () => {
+  for (const begin of [surfing, dancing, chasing]) {
+    const crew = begin(50)
+    expect(startPlay(crew, () => 0, 200)).toBe(crew) // R3: ほかの遊びは始めない
+    const friends = sync(crew, ['a'], () => 0, 200).map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
+    expect(lineUp(friends, () => 0, 200)[0]!.parade).toBeNull() // R3: 行列も始めない
+    expect(advance(poke(crew, MAIN, true), 200, () => 0.5)[0]!.play).toBeNull() // R4: 驚く
+    expect(advance(squeeze(crew, MAIN), 200, () => 0.5)[0]!.play).toBeNull() // R4: 押しつぶされる
+    expect(advance(setMain(crew, false), 200, () => 0.5)[0]!.play).toBeNull() // R4: 引っ込められる
+  }
+  // R6: どの遊びも、終わると立ち止まってから歩き出す
+  const danced = advanceBy(dancing(), DANCE_FRAMES, 200)
+  expect(danced[0]!.play).toBeNull()
+  expect(danced[0]!.wanderer.mode).toBe('pause')
+})
+
+test('dance R1・R2・R4・R5・R6: その場で 24 コマ踊り、拍ごとにバンザイ（左・右・左・右）と直立をくり返し、道具を描かない', () => {
+  const crew = wield(dancing(50), MAIN, 'Edit')
+  const poses = Array.from({ length: DANCE_FRAMES }, (_, i) => actors(advanceBy(crew, i, 200))[0]!)
+  expect(poses.every(a => a.x === 50)).toBe(true) // R1: その場で
+  expect(poses.every(a => a.prop === undefined)).toBe(true) // R4
+  const beats = poses.filter((_, i) => i % 6 === 0).map(a => [a.pose, a.facing])
+  expect(beats).toEqual([['banzai', 'left'], ['banzai', 'right'], ['banzai', 'left'], ['banzai', 'right']])
+  expect(poses.filter((_, i) => i % 6 === 3).every(a => a.pose === 'stand' && a.facing === 'front')).toBe(true)
+  expect(dancePose({ left: 1 })).toEqual({ pose: 'stand', facing: 'front' })
+  expect(advanceBy(crew, DANCE_FRAMES, 200)[0]!.play).toBeNull() // R5
+  expect(advance(sync(dancing(), ['a'], () => 0, 200), 200, () => 0.5)[0]!.play).toBeNull() // R6
+})
+
+test('dance R3: バンザイの絵は手が上にあり、胴の 3 行目の腕の張り出しが無い。ほかのマスコットは直立と同じ', () => {
+  const up = MASCOTS.clawd.draw('front', 'banzai')
+  const stand = MASCOTS.clawd.draw('front', 'stand')
+  expect(up[0]![1]).toBe(true) // 左手
+  expect(up[0]![16]).toBe(true) // 右手
+  expect([1, 2, 15, 16].map(x => up[3]![x])).toEqual([false, false, false, false]) // 腕を消す
+  expect([1, 2, 15, 16].map(x => stand[3]![x])).toEqual([true, true, true, true])
+  expect(up[5]).toEqual(stand[5]) // 脚は直立と同じ
+  expect(MASCOTS.ghost.draw('front', 'banzai')).toEqual(MASCOTS.ghost.draw('front', 'stand'))
+})
+
+test('butterfly R1・R2・R8・契約 butterflyPixels: 本体の前 12 ピクセル先の最上段に出て、2 ピクセルずつ進み、段と羽を替え、マスにそろえて黄色で描く', () => {
+  const b = launch(68, 'right')
+  expect(b).toMatchObject({ x: 68 + GAP, y: 0, phase: 'fly' })
+  expect(launch(50, 'left').x).toBe(50 - GAP - 4)
+  const crew = chasing(50)
+  const flight = Array.from({ length: 12 }, (_, i) => advanceBy(crew, i, 200)[0]!.play as { x: number; y: number; t: number })
+  expect(flight.map(f => f.x - flight[0]!.x).slice(0, 4)).toEqual([0, 2, 4, 6]) // R2: 2 ピクセルずつ
+  expect(flight.map(f => f.y)).toEqual([0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0]) // 4 コマごとに段を替える
+  const shapes = new Set<string>()
+  for (const f of flight) {
+    const px = butterflyPixels(f as never)
+    expect(px.every(p => p.color === 0xf2c94c)).toBe(true) // R8
+    expect(px.length).toBe(4)
+    // マスの区切り（左の端を偶数に切り下げた位置）からの形が ▚▞ か ▐▌（どちらも 2 マスに収まる）
+    const anchor = Math.min(...px.map(p => p.x)) - (Math.min(...px.map(p => p.x)) % 2)
+    const top = Math.min(...px.map(p => p.y))
+    expect(top % 2).toBe(0)
+    const shape = px.map(p => `${p.x - anchor},${p.y - top}`).sort().join(' ')
+    expect(['0,0 1,1 2,1 3,0', '1,0 1,1 2,0 2,1']).toContain(shape)
+    shapes.add(shape)
+  }
+  expect(shapes.size).toBe(2) // 羽を開閉する（▚▞ と ▐▌ が両方出る）
+})
+
+test('butterfly R3・R7: 本体は蝶々の 12 ピクセル手前まで 1 コマ 3 ピクセルまでで追い、追い越さず、道具を描かない', () => {
+  const crew = wield(chasing(20), MAIN, 'Read')
+  let prev = crew
+  for (let i = 0; i < 30; i += 1) {
+    const next = advance(prev, 300, () => 0.5)
+    const main = next[0]!
+    if (main.play?.kind !== 'butterfly' || main.play.phase !== 'fly') break
+    expect(Math.abs(main.wanderer.x - prev[0]!.wanderer.x)).toBeLessThanOrEqual(3)
+    expect(main.wanderer.x + MASCOTS.clawd.width).toBeLessThanOrEqual(main.play.x - GAP) // 追い越さない
+    expect(actors(next)[0]!.prop).toBeUndefined() // R7
+    prev = next
+  }
+  expect(prev[0]!.wanderer.x).toBeGreaterThan(20) // 追いかけて進んだ
+})
+
+test('butterfly R4・R5・R6・S2〜S7: 端か 5 秒で飛び去り、上へ消えたら 10 コマ見送って終わる。仲間が来ると飛び去る', () => {
+  // 帯の端（幅 100）まで飛ぶと飛び去る
+  let crew = chasing(10)
+  let frames = 0
+  while ((crew[0]!.play as { phase?: string } | null)?.phase === 'fly' && frames < 100) {
+    crew = advance(crew, 100, () => 0.5)
+    frames += 1
+  }
+  expect(frames).toBeLessThan(CHASE_FRAMES) // 帯の端で（5 秒より前に）飛び去った
+  expect(crew[0]!.play).toMatchObject({ kind: 'butterfly', phase: 'away' })
+  expect(crew[0]!.wanderer.facing).toBe('front') // R5: 見送る
+  // 上へ消えたら見送り、WATCH_FRAMES で終わる
+  crew = advanceBy(crew, 2, 100)
+  expect(crew[0]!.play).toMatchObject({ phase: 'watch' })
+  expect(advanceBy(crew, WATCH_FRAMES, 100)[0]!.play).toBeNull()
+  // 広い帯では 5 秒で飛び去る
+  const wide = advanceBy(chasing(10), CHASE_FRAMES, 2000)
+  expect(wide[0]!.play).toMatchObject({ phase: 'away' })
+  // R6: 仲間が来ると飛び去る
+  expect(advance(sync(chasing(), ['a'], () => 0, 200), 200, () => 0.5)[0]!.play).toMatchObject({ phase: 'away' })
+})
+
+test('butterfly R2・R8・paint: 追いかけている間、帯に蝶々（黄色）を描く', () => {
+  const crew = advanceBy(chasing(10), 2, 200)
+  const cells = paint(actors(crew), 100)
+  expect(cellColors(cells).has(0xf2c94c)).toBe(true)
 })
 

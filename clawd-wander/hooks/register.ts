@@ -19,7 +19,7 @@
 //   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。紙吹雪は .scratch/cheer/spec.md。
 // session.compact: 会話の圧縮の間、そのループのマスコットをぺしゃんこにする（.scratch/squash/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
-// 波乗り: 本体がひとりのときは、ときどき波に乗って帯を滑る（.scratch/surf/spec.md）。
+// ひとり遊び: 本体がひとりのときは、ときどき波乗り・小踊り・蝶々のどれかをする（.scratch/play/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -39,11 +39,11 @@ import {
   join,
   lineUp,
   MAIN,
-  paddleOut,
   poke,
   release,
   setMain,
   squeeze,
+  startPlay,
   sync,
   type Timing,
   timingOf,
@@ -82,12 +82,12 @@ let lastWorking = false
 let lastCanvas = 0
 /** /config で決めた居眠り・道具の時間（.scratch/config/spec.md）。設定が変わるとモジュールごと読み直される */
 let timing: Timing = timingOf({})
-/** /config で波乗りを止めていなければ true（.scratch/surf/spec.md の R12） */
-let surfs = true
+/** /config でひとり遊びを止めていなければ true（.scratch/play/spec.md の R5） */
+let plays = true
 
 export const register: Register = (on, options) => {
   timing = timingOf(options)
-  surfs = options.surf !== false
+  plays = options.play !== false
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     if (result.agentId !== undefined) {
@@ -182,7 +182,7 @@ function tick($: EngineInterface) {
   }
   const canvas = stage.columns * 2
   const lined = lineUp(crew, Math.random, canvas, timing)
-  crew = advance(surfs ? paddleOut(lined, Math.random, canvas, timing) : lined, canvas, Math.random, timing)
+  crew = advance(plays ? startPlay(lined, Math.random, canvas, timing) : lined, canvas, Math.random, timing)
   if (!isVisible(crew)) {
     // 最後の 1 体が消えきった。帯を描き直させ、描くものが無ければ次のコマで止まる
     $.ui.invalidate('ui.render')

@@ -8,6 +8,7 @@ import type { Heading } from './parade'
 import { PROP_GAP, propPixels, type PropId } from './props'
 import { surfPixels } from './surf'
 import { confettiPixels } from './cheer'
+import { type Butterfly, butterflyPixels } from './butterfly'
 import { flatten } from './squash'
 
 /** Raster の高さ（セル） */
@@ -38,6 +39,8 @@ export type Actor = {
   readonly surf?: { readonly heading: Heading; readonly fade: number }
   /** 紙吹雪（.scratch/cheer/spec.md）。left は残りコマ */
   readonly confetti?: { readonly left: number }
+  /** 追いかけている蝶々（.scratch/butterfly/spec.md）。蝶々の位置は帯でのピクセル */
+  readonly butterfly?: Butterfly
   /** 会話の圧縮で押しつぶされている（.scratch/squash/spec.md の R2）。つぶれた絵（幅 + 2）で描く */
   readonly squashed?: true
 }
@@ -153,6 +156,14 @@ export function paint(actors: readonly Actor[], columns: number): string {
       // 板・水面・波は本体の塗りとして描く（重なりの輪郭は本体と一緒に扱う）
       for (const { dx, y, color } of surfPixels(actor.surf.heading, actor.surf.fade)) {
         const x = actor.x + dx
+        if (x < 0 || x >= width || y < 0 || y >= height) continue
+        dots.push(y * width + x)
+        tinted.set(y * width + x, color)
+      }
+    }
+    if (actor.butterfly !== undefined) {
+      // 蝶々は持ち主の塗りとして描く（butterfly の R8）。位置は帯でのピクセル
+      for (const { x, y, color } of butterflyPixels(actor.butterfly)) {
         if (x < 0 || x >= width || y < 0 || y >= height) continue
         dots.push(y * width + x)
         tinted.set(y * width + x, color)
