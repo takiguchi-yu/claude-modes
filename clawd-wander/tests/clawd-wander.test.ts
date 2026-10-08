@@ -40,7 +40,7 @@ import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/spr
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 import { EBB_FRAMES, MIN_RIDE, SURF_PACE, surfPixels } from '../hooks/surf'
 import { PLAY_CHANCE, playable } from '../hooks/play'
-import { butterflyPixels, CHASE_FRAMES, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
+import { butterflyPixels, CHASE_MAX, CHASE_MIN, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 import { flatten, SPRING_FRAMES } from '../hooks/squash'
 
@@ -2050,7 +2050,7 @@ const counted = (value: number) => {
 }
 
 /** 波に乗っている本体（x の位置から heading へ） */
-const surfing = (x = 50): Crew => beginPlay(soloMain(x), 'surf', 200)
+const surfing = (x = 50): Crew => beginPlay(soloMain(x), 'surf', 200, () => 0.5)
 
 test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえば始め、始められる遊びから乱数で選ぶ。T2〜T5 では乱数を使わない', () => {
   expect([PLAY_CHANCE, MIN_RIDE, MIN_CHASE, SURF_PACE, EBB_FRAMES]).toEqual([1 / 600, 30, 60, 3, 6])
@@ -2061,16 +2061,16 @@ test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえ�
   const crew = soloMain(50)
   const snapshot = JSON.stringify(crew)
   for (const [pick, kind] of [[0, 'surf'], [0.99, 'butterfly']] as const) {
-    const values = [0, pick]
+    const values = [0, pick, 0.5]
     let calls = 0
     const started = startPlay(crew, () => values[calls++]!, 200)
     expect(started[0]!.play?.kind).toBe(kind)
-    expect(calls).toBe(2)
+    expect(calls).toBe(kind === 'butterfly' ? 3 : 2) // 蝶々は飛んでいられる長さも選ぶ
   }
   expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
   // 波乗り・蝶々は広いほうを向く
-  expect(beginPlay(soloMain(50), 'surf', 200)[0]!).toMatchObject({ play: { kind: 'surf', heading: 'right', ebb: null }, wanderer: { facing: 'right' } })
-  expect(beginPlay(soloMain(150), 'butterfly', 200)[0]!.play).toMatchObject({ kind: 'butterfly', heading: 'left' })
+  expect(beginPlay(soloMain(50), 'surf', 200, () => 0.5)[0]!).toMatchObject({ play: { kind: 'surf', heading: 'right', ebb: null }, wanderer: { facing: 'right' } })
+  expect(beginPlay(soloMain(150), 'butterfly', 200, () => 0.5)[0]!.play).toMatchObject({ kind: 'butterfly', heading: 'left' })
   // T6: 乱数が外れると始めない（乱数は 1 回）
   const miss = counted(PLAY_CHANCE)
   expect(startPlay(crew, miss.random, 200)).toBe(crew)
@@ -2492,7 +2492,7 @@ test('squash R7・register: 作業が終わってから圧縮が終わっても�
 
 // ---- ひとり遊び（.scratch/play/spec.md）・蝶々（.scratch/butterfly/spec.md） ----
 
-const chasing = (x = 50): Crew => beginPlay(soloMain(x), 'butterfly', 200)
+const chasing = (x = 50): Crew => beginPlay(soloMain(x), 'butterfly', 200, () => 0.5)
 
 test('play R3・R4・R6: 遊びの間は行列もほかの遊びも始めず、歩けなくなる・引っ込められるとやめ、終わると立ち止まる', () => {
   for (const begin of [surfing, chasing]) {
@@ -2505,15 +2505,18 @@ test('play R3・R4・R6: 遊びの間は行列もほかの遊びも始めず、�
     expect(advance(setMain(crew, false), 200, () => 0.5)[0]!.play).toBeNull() // R4: 引っ込められる
   }
   // R6: どの遊びも、終わると立ち止まってから歩き出す
-  const chased = advanceBy(chasing(), CHASE_FRAMES + 2 + WATCH_FRAMES, 200)
+  const chased = advanceBy(chasing(), 150 + 2 + WATCH_FRAMES, 200) // chasing の乱数 0.5 なら 150 コマ
   expect(chased[0]!.play).toBeNull()
   expect(chased[0]!.wanderer.mode).toBe('pause')
 })
 
 test('butterfly R1・R2・R8・契約 butterflyPixels: 本体の前 12 ピクセル先の最上段に出て、2 ピクセルずつ進み、段と羽を替え、マスにそろえて黄色で描く', () => {
-  const b = launch(68, 'right')
+  const b = launch(68, 'right', () => 0.5)
   expect(b).toMatchObject({ x: 68 + GAP, y: 0, phase: 'fly' })
-  expect(launch(50, 'left').x).toBe(50 - GAP - 4)
+  expect(launch(50, 'left', () => 0.5).x).toBe(50 - GAP - 4)
+  // 飛んでいられる長さは乱数で 100〜200 コマ（10〜20 秒）から選ぶ
+  expect([launch(0, 'right', () => 0).limit, launch(0, 'right', () => 0.5).limit, launch(0, 'right', () => 0.9999).limit]).toEqual([CHASE_MIN, 150, CHASE_MAX])
+  expect([CHASE_MIN, CHASE_MAX]).toEqual([100, 200])
   const crew = chasing(50)
   const flight = Array.from({ length: 12 }, (_, i) => advanceBy(crew, i, 200)[0]!.play as { x: number; y: number; t: number })
   expect(flight.map(f => f.x - flight[0]!.x).slice(0, 4)).toEqual([0, 2, 4, 6]) // R2: 2 ピクセルずつ
@@ -2575,12 +2578,14 @@ test('butterfly R9・R3: 帯の端で折り返して飛び続け、本体も進�
   expect(against).toBeGreaterThan(0) // 蝶々の進む向きと逆に進むコマがあった（折り返した蝶々の下をくぐる）
 })
 
-test('butterfly R4・R5・R6・S2〜S7: 15 秒で飛び去り、上へ消えたら 10 コマ見送って終わる。仲間が来ると飛び去る', () => {
-  expect(CHASE_FRAMES).toBe(150)
+test('butterfly R4・R5・R6・S2〜S7: 選んだ長さで飛び去り、上へ消えたら 10 コマ見送って終わる。仲間が来ると飛び去る', () => {
+  for (const [r, limit] of [[0, 100], [0.9999, 200]] as const) {
+    const crew = beginPlay(soloMain(10), 'butterfly', 100, () => r)
+    expect(advanceBy(crew, limit - 2, 100)[0]!.play).toMatchObject({ phase: 'fly' }) // 狭い帯でも選んだ長さは飛び続ける（端で折り返す）
+    expect(advanceBy(crew, limit, 100)[0]!.play).toMatchObject({ phase: 'away' })
+  }
   const crew = chasing(10)
-  const flying = advanceBy(crew, CHASE_FRAMES - 2, 100)
-  expect(flying[0]!.play).toMatchObject({ phase: 'fly' }) // 狭い帯でも 15 秒は飛び続ける（端で折り返す）
-  let away = advanceBy(crew, CHASE_FRAMES, 100)
+  let away = advanceBy(crew, 150, 100)
   expect(away[0]!.play).toMatchObject({ kind: 'butterfly', phase: 'away' })
   expect(away[0]!.wanderer.facing).toBe('front') // R5: 見送る
   // 上へ消えたら見送り、WATCH_FRAMES で終わる

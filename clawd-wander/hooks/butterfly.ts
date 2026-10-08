@@ -1,4 +1,4 @@
-// 蝶々を追いかける（ひとり遊びの 1 つ）。蝶々がひらひら飛び、帯の端で折り返し、時間切れで上へ飛び去り、本体が見送る。
+// 蝶々を追いかける（ひとり遊びの 1 つ）。蝶々がひらひら飛び、帯の端で折り返し、選んだ長さ（10〜20 秒）で上へ飛び去り、本体が見送る。
 // 本体をどう動かすかは crew.ts が決め、ここは蝶々の状態の進め方と絵を持つ。
 // 仕様は .scratch/butterfly/spec.md。顔ぶれも描画も Claude Code の API も知らない。
 
@@ -9,29 +9,35 @@ export const MIN_CHASE = 60
 /** 蝶々が 1 コマで進むピクセル数（R2）と、本体の前の端から空ける距離（R1・R3） */
 export const FLY_PACE = 2
 export const GAP = 12
-/** 飛んでいられるコマ数（15 秒。R4）と、飛び去ったあと見送るコマ数（R5） */
-export const CHASE_FRAMES = 150
+/** 飛んでいられるコマ数の範囲（10〜20 秒。始めるときに選ぶ。R1・R4）と、飛び去ったあと見送るコマ数（R5） */
+export const CHASE_MIN = 100
+export const CHASE_MAX = 200
 export const WATCH_FRAMES = 10
 /** 蝶々の幅（ピクセル。R2）と色（R8） */
 export const WIDTH = 4
 const COLOR = 0xf2c94c
 
-/** x・y は蝶々の左上（帯でのピクセル）。t は飛び始めてからのコマ数。left は見送りの残りコマ */
+/** x・y は蝶々の左上（帯でのピクセル）。t は飛び始めてからのコマ数。limit は飛んでいられるコマ数。left は見送りの残りコマ */
 export type Butterfly = {
   readonly heading: Heading
   readonly x: number
   readonly y: number
   readonly t: number
+  readonly limit: number
   readonly phase: 'fly' | 'away' | 'watch'
   readonly left: number
 }
 
-/** 蝶々を出す（R1）。`front` は本体の向かう側の端（右なら絵の右端の次、左なら左端）のピクセル */
-export const launch = (front: number, heading: Heading): Butterfly => ({
+/**
+ * 蝶々を出す（R1）。`front` は本体の向かう側の端（右なら絵の右端の次、左なら左端）のピクセル。
+ * 飛んでいられる長さを `random` で CHASE_MIN〜CHASE_MAX から選ぶ
+ */
+export const launch = (front: number, heading: Heading, random: () => number): Butterfly => ({
   heading,
   x: heading === 'right' ? front + GAP : front - GAP - WIDTH,
   y: 0,
   t: 0,
+  limit: CHASE_MIN + Math.floor(random() * (CHASE_MAX - CHASE_MIN + 1)),
   phase: 'fly',
   left: 0,
 })
@@ -44,7 +50,7 @@ export function flutter(b: Butterfly, width: number): Butterfly | null {
   const t = b.t + 1
   switch (b.phase) {
     case 'fly': {
-      if (t >= CHASE_FRAMES) return { ...b, t, phase: 'away' }
+      if (t >= b.limit) return { ...b, t, phase: 'away' }
       const y = Math.floor(t / 4) % 2 === 0 ? 0 : 2
       const x = b.x + (b.heading === 'right' ? FLY_PACE : -FLY_PACE)
       // R9: 次で端を越えるなら、その場で折り返す

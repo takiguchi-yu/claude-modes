@@ -261,17 +261,17 @@ export function startPlay(crew: Crew, random: () => number, canvas: number, timi
   if (kinds.length === 0) return crew
   if (random() >= PLAY_CHANCE) return crew
   const kind = kinds[Math.min(kinds.length - 1, Math.floor(random() * kinds.length))]!
-  return beginPlay(crew, kind, canvas)
+  return beginPlay(crew, kind, canvas, random)
 }
 
-/** 本体に遊び `kind` を始めさせる（各遊びの仕様の始め方）。`canvas` は帯の幅（ピクセル） */
-export function beginPlay(crew: Crew, kind: PlayKind, canvas: number): Crew {
+/** 本体に遊び `kind` を始めさせる（各遊びの仕様の始め方）。`canvas` は帯の幅（ピクセル）。`random` は蝶々の飛んでいられる長さを選ぶ */
+export function beginPlay(crew: Crew, kind: PlayKind, canvas: number, random: () => number): Crew {
   const [main, ...rest] = crew
   if (main === undefined) return crew
   const x = main.wanderer.x
   const heading = widerSide(x, roomFor(main.mascot, canvas))
   const front = heading === 'right' ? x + MASCOTS[main.mascot].width : x
-  const play: Play = kind === 'surf' ? { kind, ...catchWave(heading) } : { kind, ...launch(front, heading) }
+  const play: Play = kind === 'surf' ? { kind, ...catchWave(heading) } : { kind, ...launch(front, heading, random) }
   // 波乗り・蝶々は向かう側を向く
   return [{ ...main, wanderer: { ...main.wanderer, facing: heading }, play }, ...rest]
 }

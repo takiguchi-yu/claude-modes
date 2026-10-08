@@ -58,9 +58,9 @@ T1 は register.ts が startPlay を呼ばないことで満たす。T5 は帯�
 
 契約: startPlay(crew, random, canvas, timing = DEFAULT_TIMING)（crew.ts。2026-10-08 に paddleOut から変えた）
 - 事後: T7 なら、本体が始められる遊びのうち random で選んだ 1 つを始める（beginPlay と同じ）。それ以外は crew そのもの
-- 不変: crew を変更しない。T2〜T5 では random を呼ばない。T6 では 1 回、T7 では 2 回呼ぶ（始めるか・どれにするか）
+- 不変: crew を変更しない。T2〜T5 では random を呼ばない。T6 では 1 回、T7 では 2 回呼ぶ（始めるか・どれにするか）。蝶々を選んだときは、もう 1 回呼ぶ（飛んでいられる長さ）
 
-契約: beginPlay(crew, kind, canvas, random)（crew.ts）
+契約: beginPlay(crew, kind, canvas, random)（crew.ts。random は蝶々の飛んでいられる長さを選ぶのに使う）
 - 事前: kind は始められる遊び
 - 事後: 本体が kind の遊びを始めた顔ぶれ（遊びごとの始め方は各仕様）
 ```
