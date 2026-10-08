@@ -16,6 +16,7 @@ import {
   lineUp,
   MAIN,
   MAX_AGENTS,
+  paddleOut,
   type Member,
   PARADE_CHANCE,
   poke,
@@ -32,6 +33,7 @@ import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
+import { CALM_FRAMES, EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -2014,5 +2016,169 @@ test('overlap R6: 道具を見せている者は、渡した順に関わらず�
   expect(paint([holder, ghost(14)], 20)).toBe(paint([ghost(14), holder], 20))
   // 道具を見せていない者どうしは、渡した順のまま（R2）
   expect(paint([ghost(4), ghost(8)], 20)).not.toBe(paint([ghost(8), ghost(4)], 20))
+})
+
+// ---- 波乗り（.scratch/surf/spec.md） -----------------------------------------------
+
+const BOARD = 0xf2c94c
+const WATER = 0x4a90d9
+const FOAM = 0xe8f4ff
+
+/** 凪がたまったひとりの本体（x の位置。帯の幅 200 ピクセルなら置ける x の最大は 182） */
+const calmMain = (x = 50): Crew => hereMain(x).map(m => ({ ...m, calm: CALM_FRAMES, wanderer: { ...m.wanderer, x } }))
+
+/** 返す値と、呼ばれた回数を数える乱数 */
+const counted = (value: number) => {
+  let calls = 0
+  return { random: () => ((calls += 1), value), calls: () => calls }
+}
+
+/** 波に乗っている本体（x の位置から heading へ） */
+const surfing = (x = 50): Crew => paddleOut(calmMain(x), () => 0, 200)
+
+test('surf R1・T1〜T7・契約 paddleOut: 条件がそろったときだけ、帯の広いほうへ乗り出す', () => {
+  expect([CALM_FRAMES, SURF_CHANCE, MIN_RIDE, SURF_PACE, EBB_FRAMES]).toEqual([450, 1 / 150, 30, 3, 6])
+  // T7: 広いほう（右）へ乗り出し、その向きを向く。乱数は 1 回
+  const hit = counted(0)
+  const crew = calmMain(50)
+  const snapshot = JSON.stringify(crew)
+  const rode = paddleOut(crew, hit.random, 200)
+  expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
+  expect(rode[0]!.surf).toEqual({ heading: 'right', ebb: null })
+  expect(rode[0]!.wanderer.facing).toBe('right')
+  expect(hit.calls()).toBe(1)
+  expect(paddleOut(calmMain(150), () => 0, 200)[0]!.surf?.heading).toBe('left') // 右が狭ければ左へ
+  // T6: 乱数が外れると始めない
+  const miss = counted(SURF_CHANCE)
+  expect(paddleOut(crew, miss.random, 200)).toBe(crew)
+  expect(miss.calls()).toBe(1)
+  // T1〜T5: 始めず、乱数も使わない
+  const none = counted(0)
+  const notAlone = sync(calmMain(), ['a'], () => 0, 200)
+  const startled = poke(calmMain(), MAIN, true)
+  const busy = surfing()
+  const restless = calmMain().map(m => ({ ...m, calm: CALM_FRAMES - 1 }))
+  const cramped = calmMain(20)
+  for (const [c, canvas] of [[notAlone, 200], [startled, 200], [busy, 200], [restless, 200], [cramped, 18 + 40]] as const) {
+    expect(paddleOut(c, none.random, canvas)).toBe(c)
+  }
+  expect(none.calls()).toBe(0)
+})
+
+test('surf R12: ひとりで歩ける間だけ凪がたまり、CALM_FRAMES で止まり、波乗りを終えると 0 に戻る', () => {
+  const before = hereMain()[0]!.calm
+  expect(advanceBy(hereMain(), 10, 200)[0]!.calm).toBe(before + 10)
+  expect(advanceBy(hereMain(), CALM_FRAMES + 50, 400)[0]!.calm).toBe(CALM_FRAMES)
+  const startled = poke(hereMain(), MAIN, true)
+  expect(advanceBy(startled, 5, 200)[0]!.calm).toBe(startled[0]!.calm) // 驚いている間はためない
+  const crowded = advanceBy(sync(hereMain(), ['a'], () => 0, 200), 5, 200)
+  expect(crowded[0]!.calm).toBe(hereMain()[0]!.calm) // 仲間がいる間はためない
+  const gone = advanceBy(setMain(calmMain(), false), LEAP_FRAMES + FADE_FRAMES + 1, 200)
+  expect(gone[0]!.presence.kind).toBe('gone')
+  expect(gone[0]!.calm).toBe(0) // 消えきると 0
+})
+
+test('surf R2〜R5・S4・S5・S8: 1 コマ 3 ピクセル滑り、端の手前で止まって 6 コマ引き、降りて立ち止まる', () => {
+  const one = advance(surfing(50), 200, () => 0.5)
+  expect(one[0]!.wanderer).toMatchObject({ x: 50 + SURF_PACE, facing: 'right' }) // S4
+  expect(one[0]!.surf).toEqual({ heading: 'right', ebb: null })
+  // S5: 次で端（置ける x の最大 182）を越えるなら、その場で止まって引き始める
+  const nearEdge = surfing(50).map(m => ({ ...m, wanderer: { ...m.wanderer, x: 181 } }))
+  const edge = advance(nearEdge, 200, () => 0.5)
+  expect(edge[0]!.wanderer.x).toBe(181)
+  expect(edge[0]!.surf?.ebb).toBe(EBB_FRAMES)
+  // S8: 引いている間は動かず、6 コマで引ききって降りる
+  const receding = advanceBy(edge, EBB_FRAMES - 1, 200)
+  expect(receding[0]!.surf?.ebb).toBe(1)
+  expect(receding[0]!.wanderer.x).toBe(181)
+  const landed = advanceBy(edge, EBB_FRAMES, 200)
+  expect(landed[0]!.surf).toBeNull()
+  expect(landed[0]!.wanderer.mode).toBe('pause') // R5: 立ち止まってから歩き出す
+  expect(landed[0]!.calm).toBe(0) // R12
+})
+
+test('surf R6・R7・R11・S6・S7: 仲間が来ると引き、驚く・居眠り・引っ込められるとやめ、波乗りの間は行列を始めない', () => {
+  // S6: 仲間が加わると、その場で止まって引く
+  const crowded = advance(sync(surfing(50), ['a'], () => 0, 200), 200, () => 0.5)
+  expect(crowded[0]!.surf?.ebb).toBe(EBB_FRAMES)
+  expect(crowded[0]!.wanderer.x).toBe(50)
+  // S7: 驚く・居眠りする・引っ込められると、その場でやめる
+  expect(advance(poke(surfing(), MAIN, true), 200, () => 0.5)[0]!).toMatchObject({ surf: null, calm: 0 })
+  const sleepy = surfing().map(m => ({ ...m, idle: DOZE_FRAMES }))
+  expect(advance(sleepy, 200, () => 0.5)[0]!.surf).toBeNull()
+  expect(advance(setMain(surfing(), false), 200, () => 0.5)[0]!.surf).toBeNull()
+  // R11: 波乗り（引いている間）は行列を始めない
+  const withFriend = advanceBy(sync(surfing(50), ['a'], () => 0, 200), 1, 200)
+  const here = withFriend.map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
+  expect(lineUp(here, () => 0, 200)[0]!.parade).toBeNull()
+})
+
+test('surf R8・R9・契約 Actor.surf: 波乗りの間は板に乗って向かう側を向き、道具を描かず、引く間は薄くなる', () => {
+  const held = wield(surfing(), MAIN, 'Edit')
+  const actor = actors(held)[0]!
+  expect(actor).toMatchObject({ facing: 'right', surf: { heading: 'right', fade: 1 } })
+  expect(actor.prop).toBeUndefined() // R8
+  expect(held[0]!.prop).not.toBeNull() // 道具は持ったまま（数と残りは変わり続ける）
+  const ebbing = advance(sync(surfing(), ['a'], () => 0, 200), 200, () => 0.5)
+  expect(actors(ebbing)[0]!.surf?.fade).toBe(1) // 引き始め（残り 6）
+  expect(actors(advanceBy(ebbing, 3, 200))[0]!.surf?.fade).toBe(3 / EBB_FRAMES)
+})
+
+test('surf R9・R4・契約 surfPixels: 板・水面・波・泡を描き、左へ進むときは反転し、薄くするときは板と板の真下の水面を残す', () => {
+  const right = surfPixels('right', 1)
+  const of = (pixels: typeof right, color: number) => pixels.filter(p => p.color === color)
+  expect(of(right, BOARD).map(p => p.dx)).toEqual(Array.from({ length: 20 }, (_, i) => i - 1)) // 本体の幅 + 2
+  expect(of(right, BOARD).every(p => p.y === 4)).toBe(true)
+  expect(of(right, FOAM).length).toBe(3)
+  // 水面は波の後ろの端（-16）から板の先 + 2（20）まで、切れ目なし
+  expect(right.filter(p => p.y === 5).map(p => p.dx)).toEqual(Array.from({ length: 37 }, (_, i) => i - 16))
+  // 波は本体の後ろ（右へ進むなら左）
+  expect(right.filter(p => p.y < 4).every(p => p.dx < 0)).toBe(true)
+  const left = surfPixels('left', 1)
+  expect(left.filter(p => p.y < 4).every(p => p.dx > 17)).toBe(true)
+  // 薄くすると波と水面が減り、板と板の真下の水面（-1〜18）は残る
+  const faded = surfPixels('right', 0.5)
+  expect(of(faded, BOARD).length).toBe(20)
+  expect(faded.length).toBeLessThan(right.length)
+  const gone = surfPixels('right', 0)
+  expect(gone.filter(p => p.color !== BOARD).every(p => p.y === 5 && p.dx >= -1 && p.dx <= 18)).toBe(true)
+  expect(gone.filter(p => p.y === 5).length).toBe(20)
+})
+
+test('surf R9・paint: 波乗りの本体は 1 ピクセル浮いて脚を描かず、板・水面・波の色で描く', () => {
+  const columns = 30
+  const riding = clawd(30, { facing: 'right', surf: { heading: 'right', fade: 1 } })
+  const cells = paint([riding], columns)
+  const colors = cellColors(cells)
+  for (const color of [ORANGE, BOARD, WATER, FOAM]) expect(colors.has(color)).toBe(true)
+  // 最下段のマス（ピクセルの 4・5 行目）には、本体の橙が無い（脚の代わりに板）
+  const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+  for (let col = 0; col < columns; col += 1) {
+    const at = ((SPRITE_ROWS - 1) * columns + col) * 3
+    if (words[at] === 0x20) continue
+    expect([words[at + 1], words[at + 2]]).not.toContain(ORANGE)
+  }
+  // 浮かせても頭は切れない（Clawd の最上行は空き）
+  expect(litCount(decode(cells, columns).lines)).toBeGreaterThan(litCount(decode(paint([clawd(30)], columns), columns).lines))
+})
+
+test('surf R4・R9・paint: 板の下のマスは、乗っている間も引いている間も板の黄と水の青の 2 色で描く（黄色い歯にならない）', () => {
+  const columns = 30
+  for (const fade of [1, 0.5, 1 / 6]) {
+    // x = 30（偶数）なら板（-1〜18 → 29〜48）は 1 マス目の途中から始まるので、板の全幅を含むマス（15〜23 列）を見る
+    const cells = paint([clawd(30, { facing: 'right', surf: { heading: 'right', fade } })], columns)
+    const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+    for (let col = 15; col <= 23; col += 1) {
+      const at = ((SPRITE_ROWS - 1) * columns + col) * 3
+      expect({ col, fade, colors: [words[at + 1], words[at + 2]].sort() }).toEqual({ col, fade, colors: [BOARD, WATER].sort() })
+    }
+  }
+})
+
+test('surf R9・paint: 泡は、マスとの位置がどちらにずれても描かれる', () => {
+  for (const x of [30, 31]) {
+    const cells = paint([clawd(x, { facing: 'right', surf: { heading: 'right', fade: 1 } })], 30)
+    expect({ x, foam: cellColors(cells).has(FOAM) }).toEqual({ x, foam: true })
+  }
 })
 

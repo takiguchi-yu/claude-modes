@@ -7,6 +7,7 @@
 // ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く。呼び出しが動いている間（engage〜disengage）は眠らない（.scratch/emotes/spec.md）。
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
+// 本体がひとりのときは、ときどき波乗りする（paddleOut・ride。.scratch/surf/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
 
@@ -15,6 +16,7 @@ import { begin, type Heading, type Parade, record, slot } from './parade'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
 import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
+import { CALM_FRAMES, catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
 import { poseOf, start, step, type Wanderer } from './wander'
 
 export const MAIN = 'main'
@@ -41,6 +43,10 @@ export type Member = {
   readonly prop: Grip | null
   /** 率いている行列。本体だけが持ち、仲間は常に null（.scratch/parade/spec.md） */
   readonly parade: Parade | null
+  /** 波乗り。本体だけが持ち、仲間は常に null（.scratch/surf/spec.md） */
+  readonly surf: Surf | null
+  /** 凪。ひとりで歩けたコマ数（波乗りを終えてから。CALM_FRAMES で止める。surf の R12）。本体だけが使う */
+  readonly calm: number
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
@@ -81,13 +87,15 @@ const PARADE_FRAMES = { min: 80, max: 150 }
  */
 const PARADE_GAP = 2
 const FOLLOW_PACE = 4
+/** 波乗りを終えたあと、本体が立ち止まるコマ数の範囲（surf の R5） */
+const SURF_PAUSE = { min: 5, max: 15 }
 /** 行列が終わったあと、仲間が立ち止まるコマ数の範囲 */
 const PARADE_PAUSE = { min: 5, max: 15 }
 
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, calm: 0 },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -159,7 +167,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, calm: 0 }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -190,7 +198,8 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
     const isHere = m.presence.kind === 'here'
     // デシジョンテーブル T2〜T4: 驚いている・居眠りしている間は歩かない。
     // 行列の間は本体も仲間も自分では歩かず、march で進む
-    const walks = canWalk(m, timing) && !marching
+    // surf の R2: 波乗りの間は自分では歩かず、ride で進む
+    const walks = canWalk(m, timing) && !marching && m.surf === null
     const presence = elapse(m.presence)
     return {
       ...m,
@@ -202,10 +211,60 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
       // props の R14・emotes の R13: 消えきったら、使っている呼び出しが残っていても道具をしまい、呼び出しも数え直す
       prop: presence.kind === 'gone' ? null : decay(m.prop),
       busy: presence.kind === 'gone' ? 0 : m.busy,
+      // surf の R12: 消えきったら凪を 0 に戻す
+      calm: presence.kind === 'gone' ? 0 : m.calm,
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
-  return marching ? march(kept, canvas, random, timing) : kept
+  const [main, ...friends] = kept
+  if (main === undefined) return kept
+  if (main.surf !== null) return [ride(main, friends.length > 0, canvas, random, timing), ...friends]
+  // surf の R12: ひとりで歩ける本体が、行列も波乗りもしていない間だけ凪をためる
+  const calm = friends.length === 0 && main.parade === null && canWalk(main, timing) ? Math.min(CALM_FRAMES, main.calm + 1) : main.calm
+  const calmed = [{ ...main, calm }, ...friends]
+  return marching ? march(calmed, canvas, random, timing) : calmed
+}
+
+/**
+ * ひとりで歩ける本体が、行列も波乗りもしていないコマに、凪が CALM_FRAMES たまっていて、向かう側（帯の広いほう）の奥行きが
+ * MIN_RIDE 以上あれば、SURF_CHANCE の確率で波乗りを始める（.scratch/surf/spec.md の R1・T1〜T7）。条件を満たさないときは random を呼ばない。
+ * `canvas` は帯の幅（ピクセル）
+ */
+export function paddleOut(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
+  const [main, ...friends] = crew
+  if (main === undefined || friends.length > 0 || !canWalk(main, timing) || main.parade !== null || main.surf !== null) return crew
+  if (main.calm < CALM_FRAMES) return crew
+  const x = main.wanderer.x
+  const room = roomFor(main.mascot, canvas)
+  const heading: Heading = room - x >= x ? 'right' : 'left'
+  if (Math.max(room - x, x) < MIN_RIDE) return crew
+  if (random() >= SURF_CHANCE) return crew
+  return [{ ...main, wanderer: { ...main.wanderer, facing: heading }, surf: catchWave(heading) }]
+}
+
+/**
+ * 波乗りしている本体を 1 コマ進める（surf の R2〜R7・S4〜S10）。`crowded` は仲間が顔ぶれにいるか。
+ * 乗っている間は向かう側へ SURF_PACE ピクセル進み、次で端を越えるならその場で止まって波を引かせる。
+ * 引ききったら板から降りて立ち止まる。歩けなくなった・引っ込められたら、その場でやめる
+ */
+function ride(main: Member, crowded: boolean, canvas: number, random: () => number, timing: Timing): Member {
+  const surf = main.surf!
+  // R7・S7・S10: 驚いた・居眠りした・引っ込められたら、その場でやめる
+  if (!canWalk(main, timing)) return { ...main, surf: null, calm: 0 }
+  // R6・S6: 乗っている間に仲間が加わったら、その場で止まって引かせ始める（引いている間はそのまま。S9）
+  if (crowded && surf.ebb === null) return { ...main, surf: ebb(surf) }
+  const current = surf
+  if (current.ebb === null) {
+    const next = main.wanderer.x + (current.heading === 'right' ? SURF_PACE : -SURF_PACE)
+    // R3・S5: 次で端を越えるなら、その場で止まって引かせる
+    if (next < 0 || next > roomFor(main.mascot, canvas)) return { ...main, surf: ebb(current) }
+    // R2・S4: 向かう側へ進み、その向きを向く
+    return { ...main, wanderer: { ...main.wanderer, x: next, facing: current.heading, mode: 'walk', left: 1 } }
+  }
+  const after = recede(current)
+  if (after !== null) return { ...main, surf: after }
+  // R5・S8: 引ききったら板から降り、少し立ち止まってから歩き出す
+  return { ...main, surf: null, calm: 0, wanderer: { ...main.wanderer, mode: 'pause', left: between(random, SURF_PAUSE.min, SURF_PAUSE.max) } }
 }
 
 /**
@@ -231,7 +290,8 @@ function spacing(main: Member, followers: readonly Member[]): number[] {
  */
 export function lineUp(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const [main, ...friends] = crew
-  if (main === undefined || main.parade !== null || !canWalk(main, timing)) return crew
+  // surf の R11: 波乗りの間は行列を始めない
+  if (main === undefined || main.parade !== null || main.surf !== null || !canWalk(main, timing)) return crew
   const x = main.wanderer.x
   const room = roomFor(main.mascot, canvas)
   const heading: Heading = room - x >= x ? 'right' : 'left'
@@ -348,6 +408,11 @@ export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
         // T3: 目を閉じて正面を向き、「z」を上下させる
         const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
         return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
+      }
+      if (fading === null && m.surf !== null) {
+        // surf の R8・R9: 板に乗って向かう側を向く。道具は描かない
+        const surf = { heading: m.surf.heading, fade: fadeOf(m.surf) }
+        return { ...base, facing: m.surf.heading, pose: 'stand' as const, surf }
       }
       if (fading === null) {
         const pose = poseOf(m.wanderer)

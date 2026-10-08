@@ -18,6 +18,7 @@
 //   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒（/config で変えられる）持たせる。
 //   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
+// 波乗り: 本体がひとりのときは、ときどき波に乗って帯を滑る（.scratch/surf/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -37,6 +38,7 @@ import {
   join,
   lineUp,
   MAIN,
+  paddleOut,
   poke,
   release,
   setMain,
@@ -154,7 +156,8 @@ function tick($: EngineInterface) {
       () => undefined,
     )
   }
-  crew = advance(lineUp(crew, Math.random, stage.columns * 2, timing), stage.columns * 2, Math.random, timing)
+  const canvas = stage.columns * 2
+  crew = advance(paddleOut(lineUp(crew, Math.random, canvas, timing), Math.random, canvas, timing), canvas, Math.random, timing)
   if (!isVisible(crew)) {
     // 最後の 1 体が消えきった。帯を描き直させ、描くものが無ければ次のコマで止まる
     $.ui.invalidate('ui.render')

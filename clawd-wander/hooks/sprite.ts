@@ -4,7 +4,9 @@
 // 半セル単位で位置をずらせるので、1 ピクセルずつ滑らかに歩ける。
 
 import { type Facing, MASCOT_HEIGHT, type MascotId, MASCOTS, type Pose } from './mascots'
+import type { Heading } from './parade'
 import { PROP_GAP, propPixels, type PropId } from './props'
+import { surfPixels } from './surf'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -30,6 +32,8 @@ export type Actor = {
   readonly emote?: Emote
   /** 手に持つ道具。side の側に描き、raised なら 1 ピクセル上げる */
   readonly prop?: { readonly kind: PropId; readonly side: 'left' | 'right'; readonly raised: boolean }
+  /** 波乗り（.scratch/surf/spec.md の R9）。1 ピクセル浮かせて脚を描かず、板・水面・波を描く。fade は波と水面の濃さ */
+  readonly surf?: { readonly heading: Heading; readonly fade: number }
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
@@ -98,12 +102,14 @@ export function paint(actors: readonly Actor[], columns: number): string {
     const dots: number[] = []
     const tinted = new Map<number, number>()
     const opacity = actor.opacity ?? 1
-    const lift = actor.lift ?? 0
+    // surf の R9: 波乗りの間は 1 ピクセル浮かせ、脚の行（最下行）を描かない
+    const lift = actor.surf !== undefined ? 1 : (actor.lift ?? 0)
     const bitmap = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
     bitmap.forEach((line, sy) =>
       line.forEach((on, dx) => {
         const x = actor.x + dx
         const y = sy - lift
+        if (actor.surf !== undefined && sy === MASCOT_HEIGHT - 1) return
         if (!on || x < 0 || x >= width || y < 0 || y >= height) return
         if (opacity < 1 && !keeps(dx, sy, opacity)) return
         dots.push(y * width + x)
@@ -135,6 +141,15 @@ export function paint(actors: readonly Actor[], columns: number): string {
           if (color !== actor.color) tinted.set(y * width + x, color)
         }),
       )
+    }
+    if (actor.surf !== undefined) {
+      // 板・水面・波は本体の塗りとして描く（重なりの輪郭は本体と一緒に扱う）
+      for (const { dx, y, color } of surfPixels(actor.surf.heading, actor.surf.fade)) {
+        const x = actor.x + dx
+        if (x < 0 || x >= width || y < 0 || y >= height) continue
+        dots.push(y * width + x)
+        tinted.set(y * width + x, color)
+      }
     }
     if (actor.emote !== undefined) {
       // 記号はこのコマの絵の右端の塗りから 1 ピクセル以上空けて置く。帯からはみ出す分は切る
