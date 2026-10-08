@@ -2534,39 +2534,59 @@ test('butterfly R1・R2・R8・契約 butterflyPixels: 本体の前 12 ピクセ
   expect(shapes.size).toBe(2) // 羽を開閉する（▚▞ と ▐▌ が両方出る）
 })
 
-test('butterfly R3・R7: 本体は蝶々の 12 ピクセル手前まで 1 コマ 3 ピクセルまでで追い、追い越さず、道具を描かない', () => {
+test('butterfly R3・R7: 本体は蝶々の 12 ピクセル手前まで 1 コマ 3 ピクセルまでで追い、道具を描かない', () => {
   const crew = wield(chasing(20), MAIN, 'Read')
   let prev = crew
   for (let i = 0; i < 30; i += 1) {
     const next = advance(prev, 300, () => 0.5)
     const main = next[0]!
-    if (main.play?.kind !== 'butterfly' || main.play.phase !== 'fly') break
+    if (main.play?.kind !== 'butterfly' || main.play.phase !== 'fly' || main.play.heading !== 'right') break
     expect(Math.abs(main.wanderer.x - prev[0]!.wanderer.x)).toBeLessThanOrEqual(3)
-    expect(main.wanderer.x + MASCOTS.clawd.width).toBeLessThanOrEqual(main.play.x - GAP) // 追い越さない
+    expect(main.wanderer.x + MASCOTS.clawd.width).toBeLessThanOrEqual(main.play.x - GAP) // 右へ飛ぶ間は追い越さない
     expect(actors(next)[0]!.prop).toBeUndefined() // R7
     prev = next
   }
   expect(prev[0]!.wanderer.x).toBeGreaterThan(20) // 追いかけて進んだ
 })
 
-test('butterfly R4・R5・R6・S2〜S7: 端か 5 秒で飛び去り、上へ消えたら 10 コマ見送って終わる。仲間が来ると飛び去る', () => {
-  // 帯の端（幅 100）まで飛ぶと飛び去る
+test('butterfly R9・R3: 帯の端で折り返して飛び続け、本体も進んだ向きを向いて追う', () => {
   let crew = chasing(10)
-  let frames = 0
-  while ((crew[0]!.play as { phase?: string } | null)?.phase === 'fly' && frames < 100) {
+  const headings = new Set<string>()
+  const facings = new Set<string>()
+  let against = 0
+  for (let i = 0; i < 120; i += 1) {
+    const before = crew[0]!.wanderer.x
     crew = advance(crew, 100, () => 0.5)
-    frames += 1
+    const play = crew[0]!.play as { heading: string; phase: string; x: number } | null
+    if (play === null || play.phase !== 'fly') break
+    expect(play.x).toBeGreaterThanOrEqual(0)
+    expect(play.x).toBeLessThanOrEqual(100 - 4) // 帯からはみ出さない
+    headings.add(play.heading)
+    const dx = crew[0]!.wanderer.x - before
+    if (dx !== 0) {
+      // R3: 進んだ向きを向く（折り返した直後、蝶々の進む向きと逆に進むコマも）
+      expect(crew[0]!.wanderer.facing).toBe(dx > 0 ? 'right' : 'left')
+      facings.add(crew[0]!.wanderer.facing)
+      if ((dx > 0 ? 'right' : 'left') !== play.heading) against += 1
+    }
   }
-  expect(frames).toBeLessThan(CHASE_FRAMES) // 帯の端で（5 秒より前に）飛び去った
-  expect(crew[0]!.play).toMatchObject({ kind: 'butterfly', phase: 'away' })
-  expect(crew[0]!.wanderer.facing).toBe('front') // R5: 見送る
+  expect(headings).toEqual(new Set(['right', 'left'])) // 折り返した
+  expect(facings).toEqual(new Set(['right', 'left'])) // 本体も向きを変えて追った
+  expect(against).toBeGreaterThan(0) // 蝶々の進む向きと逆に進むコマがあった（折り返した蝶々の下をくぐる）
+})
+
+test('butterfly R4・R5・R6・S2〜S7: 15 秒で飛び去り、上へ消えたら 10 コマ見送って終わる。仲間が来ると飛び去る', () => {
+  expect(CHASE_FRAMES).toBe(150)
+  const crew = chasing(10)
+  const flying = advanceBy(crew, CHASE_FRAMES - 2, 100)
+  expect(flying[0]!.play).toMatchObject({ phase: 'fly' }) // 狭い帯でも 15 秒は飛び続ける（端で折り返す）
+  let away = advanceBy(crew, CHASE_FRAMES, 100)
+  expect(away[0]!.play).toMatchObject({ kind: 'butterfly', phase: 'away' })
+  expect(away[0]!.wanderer.facing).toBe('front') // R5: 見送る
   // 上へ消えたら見送り、WATCH_FRAMES で終わる
-  crew = advanceBy(crew, 2, 100)
-  expect(crew[0]!.play).toMatchObject({ phase: 'watch' })
-  expect(advanceBy(crew, WATCH_FRAMES, 100)[0]!.play).toBeNull()
-  // 広い帯では 5 秒で飛び去る
-  const wide = advanceBy(chasing(10), CHASE_FRAMES, 2000)
-  expect(wide[0]!.play).toMatchObject({ phase: 'away' })
+  away = advanceBy(away, 2, 100)
+  expect(away[0]!.play).toMatchObject({ phase: 'watch' })
+  expect(advanceBy(away, WATCH_FRAMES, 100)[0]!.play).toBeNull()
   // R6: 仲間が来ると飛び去る
   expect(advance(sync(chasing(), ['a'], () => 0, 200), 200, () => 0.5)[0]!.play).toMatchObject({ phase: 'away' })
 })

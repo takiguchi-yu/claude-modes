@@ -1,4 +1,4 @@
-// 蝶々を追いかける（ひとり遊びの 1 つ）。蝶々が向かう側へひらひら飛び、端か時間切れで上へ飛び去り、本体が見送る。
+// 蝶々を追いかける（ひとり遊びの 1 つ）。蝶々がひらひら飛び、帯の端で折り返し、時間切れで上へ飛び去り、本体が見送る。
 // 本体をどう動かすかは crew.ts が決め、ここは蝶々の状態の進め方と絵を持つ。
 // 仕様は .scratch/butterfly/spec.md。顔ぶれも描画も Claude Code の API も知らない。
 
@@ -9,8 +9,8 @@ export const MIN_CHASE = 60
 /** 蝶々が 1 コマで進むピクセル数（R2）と、本体の前の端から空ける距離（R1・R3） */
 export const FLY_PACE = 2
 export const GAP = 12
-/** 飛んでいられるコマ数（5 秒。R4）と、飛び去ったあと見送るコマ数（R5） */
-export const CHASE_FRAMES = 50
+/** 飛んでいられるコマ数（15 秒。R4）と、飛び去ったあと見送るコマ数（R5） */
+export const CHASE_FRAMES = 150
 export const WATCH_FRAMES = 10
 /** 蝶々の幅（ピクセル。R2）と色（R8） */
 export const WIDTH = 4
@@ -39,14 +39,17 @@ export const launch = (front: number, heading: Heading): Butterfly => ({
 /** 飛び去らせる（R4・R6・S2・S3）。飛び去っている・見送っているならそのまま（S5・S7） */
 export const scare = (b: Butterfly): Butterfly => (b.phase === 'fly' ? { ...b, phase: 'away' } : b)
 
-/** 1 コマ進める（S1・S2・S4・S6）。`width` は帯の幅（ピクセル）。見送り終えたら null */
+/** 1 コマ進める（S1・S2・S4・S6）。`width` は帯の幅（ピクセル）。帯の端では折り返す（R9）。見送り終えたら null */
 export function flutter(b: Butterfly, width: number): Butterfly | null {
   const t = b.t + 1
   switch (b.phase) {
     case 'fly': {
+      if (t >= CHASE_FRAMES) return { ...b, t, phase: 'away' }
+      const y = Math.floor(t / 4) % 2 === 0 ? 0 : 2
       const x = b.x + (b.heading === 'right' ? FLY_PACE : -FLY_PACE)
-      if (x < 0 || x > width - WIDTH || t >= CHASE_FRAMES) return { ...b, t, phase: 'away' }
-      return { ...b, x, t, y: Math.floor(t / 4) % 2 === 0 ? 0 : 2 }
+      // R9: 次で端を越えるなら、その場で折り返す
+      if (x < 0 || x > width - WIDTH) return { ...b, t, y, heading: b.heading === 'right' ? 'left' : 'right' }
+      return { ...b, x, t, y }
     }
     case 'away': {
       // 前へ 2 ピクセル進みながら 1 マス昇る（斜め上へ飛び去る）。帯の上端より上に出たら見送りへ

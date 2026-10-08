@@ -318,8 +318,9 @@ function ride(main: Member, surf: Extract<Play, { kind: 'surf' }>, crowded: bool
 }
 
 /**
- * 蝶々を追いかけている本体を 1 コマ進める（butterfly の R2〜R6）。
- * 蝶々が飛んでいる間は、前の端が蝶々の GAP 手前に来る位置へ 1 コマ CHASE_PACE ピクセルまで追う（追い越さない）。
+ * 蝶々を追いかけている本体を 1 コマ進める（butterfly の R2〜R6・R9）。
+ * 蝶々が飛んでいる間は、前の端が蝶々の GAP 手前（蝶々の進む向きの後ろ側）に来る位置へ 1 コマ CHASE_PACE ピクセルまで追う。
+ * 蝶々が端で折り返すと、本体の上を通って反対側へ飛ぶので、本体は進んだ向きを向いて追う。
  * 飛び去っている・見送っている間は止まる。見送り終えたら終わる
  */
 function chase(main: Member, b: Extract<Play, { kind: 'butterfly' }>, crowded: boolean, canvas: number, random: () => number): Member {
@@ -340,9 +341,10 @@ function chase(main: Member, b: Extract<Play, { kind: 'butterfly' }>, crowded: b
   const x = main.wanderer.x
   const goal = Math.min(Math.max(target, 0), room)
   const dx = Math.min(Math.max(goal - x, -CHASE_PACE), CHASE_PACE)
-  // R3: 進んだコマは歩く脚。向かう側を向いたまま
+  // R3: 進んだコマは歩く脚にし、進んだ向きを向く（進まないコマは蝶々の進む向き）
   const mode = dx === 0 ? ('pause' as const) : ('walk' as const)
-  return { ...main, play, wanderer: { ...main.wanderer, x: x + dx, facing: next.heading, mode, left: 1 } }
+  const facing = dx > 0 ? ('right' as const) : dx < 0 ? ('left' as const) : next.heading
+  return { ...main, play, wanderer: { ...main.wanderer, x: x + dx, facing, mode, left: 1 } }
 }
 
 /**
