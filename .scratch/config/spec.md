@@ -15,6 +15,7 @@ R1  [WHERE] userConfig の doze_seconds がある場合、帯は「いる」1 �
 R2  [WHERE] userConfig の prop_seconds がある場合、帯は道具を使い終えてからその秒数で道具をしまう（.scratch/props/spec.md の R11 の 10 秒を置き換える）。
 R3  [IF]    doze_seconds・prop_seconds が 1 以上 3600 以下の数でない場合、帯はその項目に既定値（60・10）を使う。
 R4  [KEEP]  どちらも設定しなければ、帯は引き続き 60 秒で居眠りし、10 秒で道具をしまう。
+R5  [WHERE] userConfig の surf が false の場合、帯は波乗りしない（既定はオン。.scratch/surf/spec.md の R12。2026-10-08 に追加）。
 ```
 
 `/config` で値を変えると、エンジンがモジュールを読み直す（plugin-authoring の reference.md）。そのとき帯の顔ぶれは作り直される。

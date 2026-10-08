@@ -5,10 +5,8 @@
 
 import type { Heading } from './parade'
 
-/** 凪（ひとりで歩けたコマ数）がこれだけたまるまでは始めない（45 秒。R1・R12） */
-export const CALM_FRAMES = 450
-/** 凪がたまってから、波乗りを始める確率（1 コマあたり。平均 15 秒。合わせておよそ 1 分に 1 回。R1） */
-export const SURF_CHANCE = 1 / 150
+/** 波乗りを始める確率（1 コマあたり。間隔は決まっておらず、平均でおよそ 1 分に 1 回。R1） */
+export const SURF_CHANCE = 1 / 600
 /** 向かう側の奥行きがこれ以上あるときだけ始める（ピクセル。R1） */
 export const MIN_RIDE = 30
 /** 乗っている間に 1 コマで進むピクセル数（R2） */

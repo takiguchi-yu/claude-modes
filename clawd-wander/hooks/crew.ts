@@ -16,7 +16,7 @@ import { begin, type Heading, type Parade, record, slot } from './parade'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
 import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
-import { CALM_FRAMES, catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
+import { catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
 import { poseOf, start, step, type Wanderer } from './wander'
 
 export const MAIN = 'main'
@@ -45,8 +45,6 @@ export type Member = {
   readonly parade: Parade | null
   /** 波乗り。本体だけが持ち、仲間は常に null（.scratch/surf/spec.md） */
   readonly surf: Surf | null
-  /** 凪。ひとりで歩けたコマ数（波乗りを終えてから。CALM_FRAMES で止める。surf の R12）。本体だけが使う */
-  readonly calm: number
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
@@ -95,7 +93,7 @@ const PARADE_PAUSE = { min: 5, max: 15 }
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, calm: 0 },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -167,7 +165,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, calm: 0 }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -211,29 +209,24 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
       // props の R14・emotes の R13: 消えきったら、使っている呼び出しが残っていても道具をしまい、呼び出しも数え直す
       prop: presence.kind === 'gone' ? null : decay(m.prop),
       busy: presence.kind === 'gone' ? 0 : m.busy,
-      // surf の R12: 消えきったら凪を 0 に戻す
-      calm: presence.kind === 'gone' ? 0 : m.calm,
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
   const [main, ...friends] = kept
   if (main === undefined) return kept
   if (main.surf !== null) return [ride(main, friends.length > 0, canvas, random, timing), ...friends]
-  // surf の R12: ひとりで歩ける本体が、行列も波乗りもしていない間だけ凪をためる
-  const calm = friends.length === 0 && main.parade === null && canWalk(main, timing) ? Math.min(CALM_FRAMES, main.calm + 1) : main.calm
-  const calmed = [{ ...main, calm }, ...friends]
-  return marching ? march(calmed, canvas, random, timing) : calmed
+  return marching ? march(kept, canvas, random, timing) : kept
 }
 
 /**
- * ひとりで歩ける本体が、行列も波乗りもしていないコマに、凪が CALM_FRAMES たまっていて、向かう側（帯の広いほう）の奥行きが
- * MIN_RIDE 以上あれば、SURF_CHANCE の確率で波乗りを始める（.scratch/surf/spec.md の R1・T1〜T7）。条件を満たさないときは random を呼ばない。
+ * ひとりで歩ける本体が、行列も波乗りもしていないコマに、向かう側（帯の広いほう）の奥行きが MIN_RIDE 以上あれば、
+ * SURF_CHANCE の確率で波乗りを始める（.scratch/surf/spec.md の R1・T2〜T7）。条件を満たさないときは random を呼ばない。
+ * 設定で波乗りが止められている（T1）なら、呼び出し元が呼ばない
  * `canvas` は帯の幅（ピクセル）
  */
 export function paddleOut(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const [main, ...friends] = crew
   if (main === undefined || friends.length > 0 || !canWalk(main, timing) || main.parade !== null || main.surf !== null) return crew
-  if (main.calm < CALM_FRAMES) return crew
   const x = main.wanderer.x
   const room = roomFor(main.mascot, canvas)
   const heading: Heading = room - x >= x ? 'right' : 'left'
@@ -250,7 +243,7 @@ export function paddleOut(crew: Crew, random: () => number, canvas: number, timi
 function ride(main: Member, crowded: boolean, canvas: number, random: () => number, timing: Timing): Member {
   const surf = main.surf!
   // R7・S7・S10: 驚いた・居眠りした・引っ込められたら、その場でやめる
-  if (!canWalk(main, timing)) return { ...main, surf: null, calm: 0 }
+  if (!canWalk(main, timing)) return { ...main, surf: null }
   // R6・S6: 乗っている間に仲間が加わったら、その場で止まって引かせ始める（引いている間はそのまま。S9）
   if (crowded && surf.ebb === null) return { ...main, surf: ebb(surf) }
   const current = surf
@@ -264,7 +257,7 @@ function ride(main: Member, crowded: boolean, canvas: number, random: () => numb
   const after = recede(current)
   if (after !== null) return { ...main, surf: after }
   // R5・S8: 引ききったら板から降り、少し立ち止まってから歩き出す
-  return { ...main, surf: null, calm: 0, wanderer: { ...main.wanderer, mode: 'pause', left: between(random, SURF_PAUSE.min, SURF_PAUSE.max) } }
+  return { ...main, surf: null, wanderer: { ...main.wanderer, mode: 'pause', left: between(random, SURF_PAUSE.min, SURF_PAUSE.max) } }
 }
 
 /**

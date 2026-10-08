@@ -14,6 +14,12 @@
       "title": "Seconds to hold a tool",
       "description": "How long Clawd keeps holding a tool after using it, in seconds (1-3600).",
       "default": 10
+    },
+    "surf": {
+      "type": "boolean",
+      "title": "Surf",
+      "description": "When Clawd is alone, he now and then rides a wave across the band.",
+      "default": true
     }
   }
 }

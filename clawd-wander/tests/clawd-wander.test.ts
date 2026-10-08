@@ -33,7 +33,7 @@ import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
-import { CALM_FRAMES, EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
+import { EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -46,6 +46,12 @@ const bandProps = (isWorking: boolean, bodyColumns = 40) => ({
   scroll: { offset: 0, bodyRows: 10 },
   view: {},
 })
+
+/**
+ * 実際の帯を使うテストの設定。波乗りは乱数で始まり、テストから乱数は決められないので止める
+ * （偶然の波乗りで道具が隠れないように。.scratch/surf/spec.md の R12）
+ */
+const NO_SURF = { options: { surf: false } }
 
 const band = (isWorking: boolean, bodyColumns = 40) => ({
   plugin: PLUGIN,
@@ -674,7 +680,7 @@ test('emotes の R4: 「!」は持ち主の色ではなく赤で描く', () => {
   }
 })
 
-test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', async ($, on) => {
+test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -985,7 +991,7 @@ test('R8・T1・T2・T3・T5: 驚き中・居眠り中・出入り中・道具�
   expect(actors(dozing)[0]!.prop).toBeUndefined()
 })
 
-test('register: Edit の呼び出しで本体がハンマーを持つ', async ($, on) => {
+test('register: Edit の呼び出しで本体がハンマーを持つ', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1005,7 +1011,7 @@ test('register: Edit の呼び出しで本体がハンマーを持つ', async ($
   await ui.unmount()
 })
 
-test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', async ($, on) => {
+test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1029,7 +1035,7 @@ test('register・R22: 4 つの道具はどれも、道具の色で帯に描か�
   await ui.unmount()
 })
 
-test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', async ($, on) => {
+test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1069,7 +1075,7 @@ test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash �
 const heldLately = (frames: string[], before: number, columns: number) =>
   frames.slice(-50).some(cells => litCount(decode(cells, columns).lines) - before >= 8)
 
-test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', async ($, on) => {
+test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1097,7 +1103,7 @@ test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち�
   await ui.unmount()
 })
 
-test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', async ($, on) => {
+test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1123,6 +1129,7 @@ test('register・R13: 呼び出しが例外で抜けても、持ちっぱなし�
 test(
   'register・R16: 呼び出しが中断されたら、その時点で使い終えたとみなし、10 秒でしまう',
   {
+    ...NO_SURF,
     plugins: [
       {
         name: 'interrupter',
@@ -1162,7 +1169,7 @@ test(
   },
 )
 
-test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', async ($, on) => {
+test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1187,14 +1194,14 @@ test('register・R11・R8: 拒否されても使い終えたとみなし、驚�
 
 // ---- 帯への描画 ---------------------------------------------------------------
 
-test('Claude が待機中なら何も描かない', async ($, on) => {
+test('Claude が待機中なら何も描かない', NO_SURF, async ($, on) => {
   beneath(on)
   const ui = await $.ui.mount({ ...band(false), surface: 'terminal' })
   expect(await ui.find({ key: 'clawd' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', async ($, on) => {
+test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', NO_SURF, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
@@ -1205,7 +1212,7 @@ test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod �
   await ui.unmount()
 })
 
-test('作業中は歩き回り、作業が終わると止まる', async ($, on) => {
+test('作業中は歩き回り、作業が終わると止まる', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1231,7 +1238,7 @@ test('作業中は歩き回り、作業が終わると止まる', async ($, on) 
   await ui.unmount()
 })
 
-test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', async ($, on) => {
+test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   let agents: AgentInfo[] = [agent('a1', 'running'), agent('a2', 'completed')]
@@ -1267,7 +1274,7 @@ test('R1: サブエージェントが動いている間は、本体の作業が�
   await ui.unmount()
 })
 
-test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', async ($, on) => {
+test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   let renders = 0
   on('ui.render', async ($, e) => {
@@ -1294,7 +1301,7 @@ test('書き換えが続けて通らなくても止まらず、帯を描き直�
   await ui.unmount()
 })
 
-test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', async ($, on) => {
+test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', NO_SURF, async ($, on) => {
   let refuse = false
   // mock.clock も clock.every に掛かるので、こちらはアニメーションの 100ms 周期だけに絞る
   on('clock.every', { ms: 100 }, async (_$, e, next) => (refuse ? { deny: 'refused by the test' } : next(e)))
@@ -1326,7 +1333,7 @@ test('タイマーが黙って終わっても、次のツール呼び出しで�
   await ui.unmount()
 })
 
-test('Raster の無い画面では描かない', async ($, on) => {
+test('Raster の無い画面では描かない', NO_SURF, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true), surface: 'desktop' })
@@ -1861,7 +1868,7 @@ test('R23・S13〜S18・契約 grab・relax・decay: 持ち替えてから 15 �
   expect(decayBy(short, 3)).toBeNull()
 })
 
-test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', async ($, on) => {
+test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', NO_SURF, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1915,7 +1922,7 @@ test('config R1: 居眠りまでのコマ数を timing で渡すと、そのコ�
   expect(actors(crew)[0]!.pose).not.toBe('sleep') // 既定（60 秒）ならまだ起きている（R4）
 })
 
-test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { doze_seconds: 2 } }, async ($, on) => {
+test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { surf: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1933,7 +1940,7 @@ test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2
   await ui.unmount()
 })
 
-test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { prop_seconds: 3 } }, async ($, on) => {
+test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { surf: false, prop_seconds: 3 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1977,7 +1984,7 @@ test('emotes R11〜R13・engage・disengage: 呼び出しが動いている間�
   expect(JSON.stringify(busy)).toBe(snapshot) // crew を変更しない
 })
 
-test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { doze_seconds: 2 } }, async ($, on) => {
+test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { surf: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -2024,8 +2031,8 @@ const BOARD = 0xf2c94c
 const WATER = 0x4a90d9
 const FOAM = 0xe8f4ff
 
-/** 凪がたまったひとりの本体（x の位置。帯の幅 200 ピクセルなら置ける x の最大は 182） */
-const calmMain = (x = 50): Crew => hereMain(x).map(m => ({ ...m, calm: CALM_FRAMES, wanderer: { ...m.wanderer, x } }))
+/** ひとりの本体（x の位置。帯の幅 200 ピクセルなら置ける x の最大は 182） */
+const soloMain = (x = 50): Crew => hereMain(x).map(m => ({ ...m, wanderer: { ...m.wanderer, x } }))
 
 /** 返す値と、呼ばれた回数を数える乱数 */
 const counted = (value: number) => {
@@ -2034,48 +2041,34 @@ const counted = (value: number) => {
 }
 
 /** 波に乗っている本体（x の位置から heading へ） */
-const surfing = (x = 50): Crew => paddleOut(calmMain(x), () => 0, 200)
+const surfing = (x = 50): Crew => paddleOut(soloMain(x), () => 0, 200)
 
-test('surf R1・T1〜T7・契約 paddleOut: 条件がそろったときだけ、帯の広いほうへ乗り出す', () => {
-  expect([CALM_FRAMES, SURF_CHANCE, MIN_RIDE, SURF_PACE, EBB_FRAMES]).toEqual([450, 1 / 150, 30, 3, 6])
+test('surf R1・T2〜T7・契約 paddleOut: 条件がそろったときだけ、帯の広いほうへ乗り出す', () => {
+  expect([SURF_CHANCE, MIN_RIDE, SURF_PACE, EBB_FRAMES]).toEqual([1 / 600, 30, 3, 6])
   // T7: 広いほう（右）へ乗り出し、その向きを向く。乱数は 1 回
   const hit = counted(0)
-  const crew = calmMain(50)
+  const crew = soloMain(50)
   const snapshot = JSON.stringify(crew)
   const rode = paddleOut(crew, hit.random, 200)
   expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
   expect(rode[0]!.surf).toEqual({ heading: 'right', ebb: null })
   expect(rode[0]!.wanderer.facing).toBe('right')
   expect(hit.calls()).toBe(1)
-  expect(paddleOut(calmMain(150), () => 0, 200)[0]!.surf?.heading).toBe('left') // 右が狭ければ左へ
+  expect(paddleOut(soloMain(150), () => 0, 200)[0]!.surf?.heading).toBe('left') // 右が狭ければ左へ
   // T6: 乱数が外れると始めない
   const miss = counted(SURF_CHANCE)
   expect(paddleOut(crew, miss.random, 200)).toBe(crew)
   expect(miss.calls()).toBe(1)
-  // T1〜T5: 始めず、乱数も使わない
+  // T2〜T5: 始めず、乱数も使わない
   const none = counted(0)
-  const notAlone = sync(calmMain(), ['a'], () => 0, 200)
-  const startled = poke(calmMain(), MAIN, true)
+  const notAlone = sync(soloMain(), ['a'], () => 0, 200)
+  const startled = poke(soloMain(), MAIN, true)
   const busy = surfing()
-  const restless = calmMain().map(m => ({ ...m, calm: CALM_FRAMES - 1 }))
-  const cramped = calmMain(20)
-  for (const [c, canvas] of [[notAlone, 200], [startled, 200], [busy, 200], [restless, 200], [cramped, 18 + 40]] as const) {
+  const cramped = soloMain(20)
+  for (const [c, canvas] of [[notAlone, 200], [startled, 200], [busy, 200], [cramped, 18 + 40]] as const) {
     expect(paddleOut(c, none.random, canvas)).toBe(c)
   }
   expect(none.calls()).toBe(0)
-})
-
-test('surf R12: ひとりで歩ける間だけ凪がたまり、CALM_FRAMES で止まり、波乗りを終えると 0 に戻る', () => {
-  const before = hereMain()[0]!.calm
-  expect(advanceBy(hereMain(), 10, 200)[0]!.calm).toBe(before + 10)
-  expect(advanceBy(hereMain(), CALM_FRAMES + 50, 400)[0]!.calm).toBe(CALM_FRAMES)
-  const startled = poke(hereMain(), MAIN, true)
-  expect(advanceBy(startled, 5, 200)[0]!.calm).toBe(startled[0]!.calm) // 驚いている間はためない
-  const crowded = advanceBy(sync(hereMain(), ['a'], () => 0, 200), 5, 200)
-  expect(crowded[0]!.calm).toBe(hereMain()[0]!.calm) // 仲間がいる間はためない
-  const gone = advanceBy(setMain(calmMain(), false), LEAP_FRAMES + FADE_FRAMES + 1, 200)
-  expect(gone[0]!.presence.kind).toBe('gone')
-  expect(gone[0]!.calm).toBe(0) // 消えきると 0
 })
 
 test('surf R2〜R5・S4・S5・S8: 1 コマ 3 ピクセル滑り、端の手前で止まって 6 コマ引き、降りて立ち止まる', () => {
@@ -2094,7 +2087,6 @@ test('surf R2〜R5・S4・S5・S8: 1 コマ 3 ピクセル滑り、端の手前�
   const landed = advanceBy(edge, EBB_FRAMES, 200)
   expect(landed[0]!.surf).toBeNull()
   expect(landed[0]!.wanderer.mode).toBe('pause') // R5: 立ち止まってから歩き出す
-  expect(landed[0]!.calm).toBe(0) // R12
 })
 
 test('surf R6・R7・R11・S6・S7: 仲間が来ると引き、驚く・居眠り・引っ込められるとやめ、波乗りの間は行列を始めない', () => {
@@ -2103,7 +2095,7 @@ test('surf R6・R7・R11・S6・S7: 仲間が来ると引き、驚く・居眠�
   expect(crowded[0]!.surf?.ebb).toBe(EBB_FRAMES)
   expect(crowded[0]!.wanderer.x).toBe(50)
   // S7: 驚く・居眠りする・引っ込められると、その場でやめる
-  expect(advance(poke(surfing(), MAIN, true), 200, () => 0.5)[0]!).toMatchObject({ surf: null, calm: 0 })
+  expect(advance(poke(surfing(), MAIN, true), 200, () => 0.5)[0]!.surf).toBeNull()
   const sleepy = surfing().map(m => ({ ...m, idle: DOZE_FRAMES }))
   expect(advance(sleepy, 200, () => 0.5)[0]!.surf).toBeNull()
   expect(advance(setMain(surfing(), false), 200, () => 0.5)[0]!.surf).toBeNull()
@@ -2182,3 +2174,29 @@ test('surf R9・paint: 泡は、マスとの位置がどちらにずれても描
   }
 })
 
+/**
+ * ひとりの本体を `minutes` 分歩かせ、帯に板の色が出たか。居眠りしないよう、設定の居眠りまでの秒数を 3600 にして呼ぶ
+ * （終わらないツール呼び出しで起こしておく形は、呼び出しのフックが時間切れで外されるので使えない）
+ */
+async function surfsWithin($: Parameters<Parameters<typeof test>[1]>[0], on: On, minutes: number): Promise<boolean> {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  let surfed = false
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e && cellColors(e.cells).has(BOARD)) surfed = true
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 100), surface: 'terminal' })
+  await clock.advance(minutes * 60_000)
+  await ui.unmount()
+  return surfed
+}
+
+test('surf R12・T1・register: surf が false なら、10 分ひとりで歩いても波乗りしない', { options: { surf: false, doze_seconds: 3600 } }, async ($, on) => {
+  expect(await surfsWithin($, on, 10)).toBe(false)
+})
+
+test('surf R1・R12・register: surf がオン（既定）なら、10 分ひとりで歩く間に波乗りする（しない確率は約 e⁻¹⁰）', { options: { doze_seconds: 3600 } }, async ($, on) => {
+  expect(await surfsWithin($, on, 10)).toBe(true)
+})

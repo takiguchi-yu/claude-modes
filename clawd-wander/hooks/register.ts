@@ -77,9 +77,12 @@ let lastWorking = false
 let lastCanvas = 0
 /** /config で決めた居眠り・道具の時間（.scratch/config/spec.md）。設定が変わるとモジュールごと読み直される */
 let timing: Timing = timingOf({})
+/** /config で波乗りを止めていなければ true（.scratch/surf/spec.md の R12） */
+let surfs = true
 
 export const register: Register = (on, options) => {
   timing = timingOf(options)
+  surfs = options.surf !== false
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     if (result.agentId !== undefined) {
@@ -157,7 +160,8 @@ function tick($: EngineInterface) {
     )
   }
   const canvas = stage.columns * 2
-  crew = advance(paddleOut(lineUp(crew, Math.random, canvas, timing), Math.random, canvas, timing), canvas, Math.random, timing)
+  const lined = lineUp(crew, Math.random, canvas, timing)
+  crew = advance(surfs ? paddleOut(lined, Math.random, canvas, timing) : lined, canvas, Math.random, timing)
   if (!isVisible(crew)) {
     // 最後の 1 体が消えきった。帯を描き直させ、描くものが無ければ次のコマで止まる
     $.ui.invalidate('ui.render')
