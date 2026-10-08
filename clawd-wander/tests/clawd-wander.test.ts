@@ -7,6 +7,7 @@ import {
   agentCount,
   assemble,
   type Crew,
+  DEFAULT_TIMING,
   DOZE_FRAMES,
   isVisible,
   join,
@@ -20,10 +21,11 @@ import {
   setMain,
   STARTLE_FRAMES,
   sync,
+  timingOf,
   wield,
 } from '../hooks/crew'
 import { begin, record, slot, TRAIL } from '../hooks/parade'
-import { decay, grab, PROP_FRAMES, PROP_GAP, propBitmap, propFor, propPixels, reach, relax, runsTests } from '../hooks/props'
+import { decay, grab, PROP_FRAMES, PROP_GAP, propBitmap, propFor, propPixels, reach, relax, runsTests, SWAP_FRAMES } from '../hooks/props'
 import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots'
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
@@ -800,10 +802,11 @@ test('R1・R2・S1・S5・契約 wield: 呼び出し元だけが持ち、使っ�
   const held = wield(crew, 'a', 'Edit')
   release(crew, 'a', 'Edit')
   expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
-  expect(held[1]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // S1
+  expect(held[1]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES, held: 0, next: null }) // S1
   expect(held[1]!.idle).toBe(0)
   expect(held[0]!.prop).toBeNull()
-  expect(wield(held, 'a', 'Grep')[1]!.prop).toEqual({ kind: 'magnifier', using: 2, left: PROP_FRAMES }) // S5 持ち替え
+  // S5・S14: 持ち替えてから 1.5 秒たつまでは、今の道具のまま持ち替えを待つ（R23）
+  expect(wield(held, 'a', 'Grep')[1]!.prop).toEqual({ kind: 'hammer', using: 2, left: PROP_FRAMES, held: 0, next: 'magnifier' })
 })
 
 test('R3・R10: 対応しないツールや、いない id では、始まりも終わりも何も変えない', () => {
@@ -817,43 +820,46 @@ test('R3・R10: 対応しないツールや、いない id では、始まりも
 test('R11・S2・S6・S10・契約 release: 終わると使っている数が減り（0 より下げない）、残りが 100 コマになる', () => {
   expect(PROP_FRAMES).toBe(100)
   const twice = wield(wield(hereMain(), MAIN, 'Read'), MAIN, 'Read')
-  expect(release(twice, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES }) // S6 n ≥ 2
+  expect(release(twice, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES, held: 0, next: null }) // S6 n ≥ 2
   const busy = advanceBy(wield(hereMain(), MAIN, 'Edit'), 30, 200)
   expect(busy[0]!.idle).toBeGreaterThan(0)
   const once = release(busy, MAIN, 'Edit')
-  expect(once[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES }) // S6 n = 1
+  expect(once[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES, held: SWAP_FRAMES, next: null }) // S6 n = 1
   expect(once[0]!.idle).toBe(0) // 途切れも 0 に戻る
-  expect(release(hereMain(), MAIN, 'Grep')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES }) // S2
+  expect(release(hereMain(), MAIN, 'Grep')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES, held: 0, next: null }) // S2
   const lingering = advanceBy(once, 40, 200)
-  expect(release(lingering, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES }) // S10 持ち替えて数え直す
+  expect(release(lingering, MAIN, 'Read')[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES, held: 0, next: null }) // S10・S16 持ち替えて数え直す
 })
 
 test('R12・S7・S9: 使っている間は何コマ進んでも残りが減らず、余韻の途中で始まれば使用中に戻る', () => {
   const using = advanceBy(wield(hereMain(), MAIN, 'WebFetch'), PROP_FRAMES * 3, 200)
-  expect(using[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES }) // S7
+  expect(using[0]!.prop).toEqual({ kind: 'magnifier', using: 1, left: PROP_FRAMES, held: SWAP_FRAMES, next: null }) // S7
   const lingering = advanceBy(release(using, MAIN, 'WebFetch'), 60, 200)
-  expect(lingering[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES - 60 })
-  expect(wield(lingering, MAIN, 'Edit')[0]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // S9
+  expect(lingering[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: PROP_FRAMES - 60, held: SWAP_FRAMES, next: null })
+  expect(wield(lingering, MAIN, 'Edit')[0]!.prop).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES, held: 0, next: null }) // S9・S16
 })
 
 test('R4・S3・S11: 使い終えてから 100 コマで道具をしまう', () => {
   const done = release(wield(hereMain(), MAIN, 'Read'), MAIN, 'Read')
-  expect(advanceBy(done, PROP_FRAMES - 1, 200)[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: 1 })
+  expect(advanceBy(done, PROP_FRAMES - 1, 200)[0]!.prop).toEqual({ kind: 'magnifier', using: 0, left: 1, held: SWAP_FRAMES, next: null })
   expect(advanceBy(done, PROP_FRAMES, 200)[0]!.prop).toBeNull()
   expect(advanceBy(hereMain(), 1, 200)[0]!.prop).toBeNull() // S3
 })
 
 test('契約 grab・relax・decay・Grip: 数は 0 より下がらず、残りは使い終えてから 1 コマずつ減る', () => {
   const g = grab(null, 'hammer')
-  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES })
-  expect(grab(g, 'magnifier')).toEqual({ kind: 'magnifier', using: 2, left: PROP_FRAMES })
-  expect(relax(null, 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES })
-  expect(relax(relax(g, 'hammer'), 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES }) // 0 より下げない
-  expect(decay(g)).toBe(g) // 使っている間は減らない
-  expect(decay({ kind: 'hammer', using: 0, left: 2 })).toEqual({ kind: 'hammer', using: 0, left: 1 })
-  expect(decay({ kind: 'hammer', using: 0, left: 1 })).toBeNull()
+  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES, held: 0, next: null })
+  expect(grab(g, 'magnifier')).toEqual({ kind: 'hammer', using: 2, left: PROP_FRAMES, held: 0, next: 'magnifier' })
+  expect(relax(null, 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES, held: 0, next: null })
+  expect(relax(relax(g, 'hammer'), 'hammer')).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES, held: 0, next: null }) // 0 より下げない
+  expect(grab(g, 'hammer', 30).left).toBe(30) // 残りは frames で決める（config の R2）
+  expect(relax(g, 'hammer', 30).left).toBe(30)
+  expect(decay(g)).toEqual({ ...g, held: 1 }) // 使っている間は残りを減らさない
+  const lingering = { kind: 'hammer', using: 0, left: 2, held: SWAP_FRAMES, next: null } as const
+  expect(decay(lingering)).toEqual({ ...lingering, left: 1 })
+  expect(decay({ ...lingering, left: 1 })).toBeNull()
   expect(decay(null)).toBeNull()
-  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES }) // 引数を変更しない
+  expect(g).toEqual({ kind: 'hammer', using: 1, left: PROP_FRAMES, held: 0, next: null }) // 引数を変更しない
 })
 
 test('契約 PROP_GAP・reach: 張り出しは、持っていなければ 0、ハンマー 6、虫めがね 7', () => {
@@ -946,7 +952,7 @@ test('R8・T1・T2・T3・T5: 驚き中・居眠り中・出入り中・道具�
   expect(actors(hereMain())[0]!.prop).toBeUndefined() // T3
   // 驚いている間も、残りは減り続ける
   const startled = advanceBy(poke(release(wield(hereMain(), MAIN, 'Edit'), MAIN, 'Edit'), MAIN, true), 5, 200)
-  expect(startled[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES - 5 })
+  expect(startled[0]!.prop).toEqual({ kind: 'hammer', using: 0, left: PROP_FRAMES - 5, held: 5, next: null })
   expect(actors(startled)[0]!.prop).toBeUndefined()
   // T5: 使ったまま 60 秒たつと、道具を持ったまま居眠りし、道具は描かない
   const dozing = advanceBy(wield(hereMain(), MAIN, 'Edit'), DOZE_FRAMES, 200)
@@ -990,6 +996,7 @@ test('register・R22: 4 つの道具はどれも、道具の色で帯に描か�
   ] as const
   for (const [input, color] of calls) {
     await $.tool.call(input as never)
+    await clock.advance(1600) // 前の道具から持ち替えるのを待つ（R23）
     await ui.redraw(bandProps(true, 60)) // 道具を持ったまま帯を描き直させる。受け付けなければ描画ごと拒否される
     const found = await ui.find({ key: 'clawd' })
     const tool = (input as { tool: string }).tool
@@ -1797,4 +1804,127 @@ test('R4: 濃さ 1 の 2 体が重なっても、どのマスにも 2 体のド�
       }
     }
   }
+})
+
+// ---- 持ち替えてから 1.5 秒は見せ続ける（.scratch/props/spec.md の R23） --------------------
+
+const MAGNIFIER_RIM = 0xc0c6cc
+
+test('R23・S13〜S18・契約 grab・relax・decay: 持ち替えてから 15 コマは今の道具を見せ、たったら最後に求めた道具に持ち替える', () => {
+  expect(SWAP_FRAMES).toBe(15)
+  const decayBy = (grip: ReturnType<typeof grab> | null, frames: number) => {
+    let next = grip
+    for (let i = 0; i < frames; i += 1) next = decay(next)
+    return next
+  }
+  // S14・S18: 虫めがねに持ち替えた直後にフラスコを求めると、15 コマたつまで虫めがねのまま
+  const waiting = grab(grab(null, 'magnifier'), 'flask')
+  expect(waiting).toMatchObject({ kind: 'magnifier', next: 'flask', using: 2 })
+  expect(decayBy(waiting, SWAP_FRAMES - 1)).toMatchObject({ kind: 'magnifier', held: SWAP_FRAMES - 1, next: 'flask' })
+  expect(decayBy(waiting, SWAP_FRAMES)).toMatchObject({ kind: 'flask', held: 0, next: null })
+  // S14: 待っている間に別の道具を求めると、待つ道具を替える（最後に求めた道具）
+  expect(relax(waiting, 'hammer')).toMatchObject({ kind: 'magnifier', next: 'hammer', using: 1 })
+  // S17: 今と同じ道具を求めると、待ちを取りやめる
+  expect(grab(waiting, 'magnifier')).toMatchObject({ kind: 'magnifier', next: null })
+  // S13・S15: 同じ道具なら経過はそのまま、1 コマごとに 1 進み、15 で止まる
+  expect(grab(decayBy(grab(null, 'hammer'), 4), 'hammer').held).toBe(4)
+  expect(decayBy(grab(null, 'hammer'), 40)!.held).toBe(SWAP_FRAMES)
+  // S16: 15 コマたっていれば、すぐ持ち替える
+  expect(grab(decayBy(grab(null, 'hammer'), SWAP_FRAMES), 'pencil')).toMatchObject({ kind: 'pencil', held: 0, next: null })
+  // 持ち替える前に余韻が尽きれば、持ち替えずにしまう
+  const short = relax(relax(grab(null, 'magnifier'), 'magnifier', 3), 'flask', 3)
+  expect(short).toMatchObject({ kind: 'magnifier', next: 'flask', using: 0, left: 3 })
+  expect(decayBy(short, 3)).toBeNull()
+})
+
+test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  let finish: (result: unknown) => void = () => undefined
+  on('tool.call', async (_$, e) =>
+    (e as { tool: string }).tool === 'Bash' ? (new Promise(resolve => (finish = resolve)) as never) : ({ result: 'ok' } as never),
+  )
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' } as never)
+  const test = $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  const start = frames.length
+  await clock.advance(1200)
+  const early = frames.slice(start)
+  expect(early.some(cells => cellColors(cells).has(MAGNIFIER_RIM))).toBe(true) // 1.2 秒は虫めがねのまま
+  expect(early.some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(false)
+  await clock.advance(800)
+  expect(cellColors(frames[frames.length - 1]!).has(FLASK_GLASS)).toBe(true) // 2 秒でフラスコ
+  finish({ result: 'ok' })
+  await test
+  await ui.unmount()
+})
+
+// ---- /config で時間を変える（.scratch/config/spec.md） ---------------------------------
+
+test('config R3・契約 timingOf: 1〜3600 秒の数だけをコマ数にし、それ以外は既定値にする', () => {
+  expect(timingOf({})).toEqual(DEFAULT_TIMING)
+  expect(DEFAULT_TIMING).toEqual({ dozeFrames: DOZE_FRAMES, propFrames: PROP_FRAMES })
+  expect(timingOf({ doze_seconds: 30, prop_seconds: 2.5 })).toEqual({ dozeFrames: 300, propFrames: 25 })
+  expect(timingOf({ doze_seconds: 1, prop_seconds: 3600 })).toEqual({ dozeFrames: 10, propFrames: 36000 })
+  for (const bad of [0, 0.5, 3601, -5, Number.NaN, '30', true, ['30']]) {
+    expect(timingOf({ doze_seconds: bad, prop_seconds: bad })).toEqual(DEFAULT_TIMING)
+  }
+  const options = { doze_seconds: 30 }
+  timingOf(options)
+  expect(options).toEqual({ doze_seconds: 30 }) // 引数を変更しない
+})
+
+test('config R1: 居眠りまでのコマ数を timing で渡すと、そのコマ数で居眠りする', () => {
+  const timing = { ...DEFAULT_TIMING, dozeFrames: 50 }
+  let crew = hereMain()
+  for (let i = 0; i < 49; i += 1) crew = advance(crew, 200, () => 0.5, timing)
+  expect(actors(crew, timing)[0]!.pose).not.toBe('sleep')
+  crew = advance(crew, 200, () => 0.5, timing)
+  expect(actors(crew, timing)[0]).toMatchObject({ pose: 'sleep', emote: { kind: 'doze' } })
+  expect(actors(crew)[0]!.pose).not.toBe('sleep') // 既定（60 秒）ならまだ起きている（R4）
+})
+
+test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { doze_seconds: 2 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const asleep = () => decode(frames[frames.length - 1]!, 40).lines.join('').includes('z')
+  expect(asleep()).toBe(false)
+  await clock.advance(2500)
+  expect(asleep()).toBe(true)
+  await ui.unmount()
+})
+
+test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { prop_seconds: 3 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(2000)
+  expect(frames.slice(-20).some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(true) // 使い終えてから 0〜2 秒
+  await clock.advance(2000)
+  expect(frames.slice(-10).some(cells => cellColors(cells).has(FLASK_GLASS))).toBe(false) // 3〜4 秒
+  await ui.unmount()
 })

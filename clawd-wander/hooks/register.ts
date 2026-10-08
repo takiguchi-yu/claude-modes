@@ -15,7 +15,8 @@
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
 // tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く）。
 //   編集系のツールならハンマー、調べる系なら虫めがね、Write は鉛筆、Agent は旗、待ちを始めるツールは砂時計、
-//   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒持たせる（.scratch/props/spec.md）。
+//   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒（/config で変えられる）持たせる。
+//   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
@@ -38,6 +39,8 @@ import {
   release,
   setMain,
   sync,
+  type Timing,
+  timingOf,
   wield,
 } from './crew'
 import { WIDEST } from './mascots'
@@ -68,12 +71,15 @@ let lastBeat = 0
 let lastWorking = false
 /** 最後に描いた帯の幅（ピクセル）。新しい仲間の出現位置を決めるのに使う */
 let lastCanvas = 0
+/** /config で決めた居眠り・道具の時間（.scratch/config/spec.md）。設定が変わるとモジュールごと読み直される */
+let timing: Timing = timingOf({})
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  timing = timingOf(options)
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     if (result.agentId !== undefined) {
-      crew = join(crew, result.agentId, Math.random, lastCanvas)
+      crew = join(crew, result.agentId, Math.random, lastCanvas, timing)
       $.ui.invalidate('ui.render')
     }
     return result
@@ -85,13 +91,13 @@ export const register: Register = on => {
     const id = e.agentId ?? MAIN
     // Bash はコマンドの中身で道具を決める（テストを走らせるならフラスコ。props の R20）
     const command = e.tool === 'Bash' ? e.command : undefined
-    crew = wield(poke(crew, id, false), id, e.tool, command)
+    crew = wield(poke(crew, id, false), id, e.tool, command, timing)
     // 1 つの呼び出しは 1 回だけ使い終える。中断されたらその時点で（props の R16）、例外で抜けても（R13）
     let ended = false
     const end = () => {
       if (ended) return
       ended = true
-      crew = release(crew, id, e.tool, command)
+      crew = release(crew, id, e.tool, command, timing)
     }
     next.signal.addEventListener('abort', end, { once: true })
     // 付けた時点で中断済みなら、abort はもう届かない
@@ -146,7 +152,7 @@ function tick($: EngineInterface) {
       () => undefined,
     )
   }
-  crew = advance(lineUp(crew, Math.random, stage.columns * 2), stage.columns * 2, Math.random)
+  crew = advance(lineUp(crew, Math.random, stage.columns * 2, timing), stage.columns * 2, Math.random, timing)
   if (!isVisible(crew)) {
     // 最後の 1 体が消えきった。帯を描き直させ、描くものが無ければ次のコマで止まる
     $.ui.invalidate('ui.render')
@@ -190,6 +196,7 @@ function refresh($: EngineInterface, list: readonly AgentInfo[]) {
     list.filter(agent => ACTIVE.has(agent.status)).map(agent => agent.id),
     Math.random,
     lastCanvas,
+    timing,
   )
   // 仲間がいなくなって Claude も作業していなければ、本体も消え始める
   crew = setMain(crew, lastWorking || hasFriends(crew))
@@ -199,7 +206,7 @@ function refresh($: EngineInterface, list: readonly AgentInfo[]) {
 }
 
 function frame(at: Stage) {
-  return paint(actors(crew), at.columns)
+  return paint(actors(crew, timing), at.columns)
 }
 
 /** blit が通らない状態が続いたら、止めずに帯を描き直させる（作り直された帯に新しく描く） */

@@ -1,5 +1,19 @@
 {
   "name": "clawd-wander",
   "version": "0.1.0",
-  "description": "While Claude works, Clawd wanders back and forth in the band above the prompt."
+  "description": "While Claude works, Clawd wanders back and forth in the band above the prompt.",
+  "userConfig": {
+    "doze_seconds": {
+      "type": "number",
+      "title": "Seconds until dozing",
+      "description": "Clawd and friends doze off when no tool has been used for this many seconds (1-3600).",
+      "default": 60
+    },
+    "prop_seconds": {
+      "type": "number",
+      "title": "Seconds to hold a tool",
+      "description": "How long Clawd keeps holding a tool after using it, in seconds (1-3600).",
+      "default": 10
+    }
+  }
 }

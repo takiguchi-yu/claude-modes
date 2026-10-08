@@ -13,7 +13,7 @@
 import { FRIENDS, type MascotId, MASCOTS } from './mascots'
 import { begin, type Heading, type Parade, record, slot } from './parade'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
-import { decay, grab, type Grip, propFor, type PropId, reach, relax } from './props'
+import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
 import { poseOf, start, step, type Wanderer } from './wander'
 
@@ -41,8 +41,30 @@ export type Member = {
   readonly parade: Parade | null
 }
 
-/** 活動がこのコマ数途切れたら居眠りする（60 秒） */
+/** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
 export const DOZE_FRAMES = 600
+
+/**
+ * /config で変えられる時間（コマ数）。`dozeFrames` は居眠りするまで、`propFrames` は道具を使い終えてからしまうまで
+ * （.scratch/config/spec.md）。居眠りと道具を決める関数が最後の引数で受け取る
+ */
+export type Timing = { readonly dozeFrames: number; readonly propFrames: number }
+export const DEFAULT_TIMING: Timing = { dozeFrames: DOZE_FRAMES, propFrames: PROP_FRAMES }
+
+/** 1 コマのミリ秒 */
+const FRAME_MS = 100
+
+/**
+ * プラグインの設定（/config）の doze_seconds・prop_seconds をコマ数にした Timing。
+ * 1 以上 3600 以下の数でなければ、その項目は既定値にする（.scratch/config/spec.md の R3）
+ */
+export function timingOf(options: Readonly<Record<string, unknown>>): Timing {
+  const frames = (key: string, fallback: number) => {
+    const seconds = options[key]
+    return typeof seconds === 'number' && seconds >= 1 && seconds <= 3600 ? Math.round((seconds * 1000) / FRAME_MS) : fallback
+  }
+  return { dozeFrames: frames('doze_seconds', DOZE_FRAMES), propFrames: frames('prop_seconds', PROP_FRAMES) }
+}
 /** 驚いているコマ数（2 秒）。最初の SHAKE_FRAMES コマだけ震える */
 export const STARTLE_FRAMES = 20
 const SHAKE_FRAMES = 8
@@ -90,11 +112,11 @@ const roomFor = (mascot: MascotId, canvas: number) => Math.max(0, canvas - MASCO
 const between = (random: () => number, min: number, max: number) => min + Math.floor(random() * (max - min + 1))
 
 /** 歩けるか: いる・驚いていない・居眠りしていない（デシジョンテーブル T4） */
-const canWalk = (m: Member) => m.presence.kind === 'here' && m.startle === 0 && m.idle < DOZE_FRAMES
+const canWalk = (m: Member, timing: Timing) => m.presence.kind === 'here' && m.startle === 0 && m.idle < timing.dozeFrames
 
 /** 出している記号の種類。驚きが居眠りより先（actors と同じ）。出入りの途中・記号なしは null */
-const emoteOf = (m: Member): Emote['kind'] | null =>
-  look(m.presence) !== null ? null : m.startle > 0 ? 'startle' : m.idle >= DOZE_FRAMES ? 'doze' : null
+const emoteOf = (m: Member, timing: Timing): Emote['kind'] | null =>
+  look(m.presence) !== null ? null : m.startle > 0 ? 'startle' : m.idle >= timing.dozeFrames ? 'doze' : null
 
 /** 0〜1 の乱数で配列から 1 つ選ぶ */
 const choose = <T>(items: readonly T[], random: () => number): T =>
@@ -111,7 +133,13 @@ export function setMain(crew: Crew, isWorking: boolean): Crew {
  * 新しく来た仲間は、まだいない種類の絵（全種類いればどれでも）で、ランダムな位置に現れる。
  * 一覧から外れたエージェントは消え始め、消えかけのうちに戻ってきたら消えるのをやめる。
  */
-export function sync(crew: Crew, agentIds: readonly string[], random: () => number, canvas: number): Crew {
+export function sync(
+  crew: Crew,
+  agentIds: readonly string[],
+  random: () => number,
+  canvas: number,
+  timing: Timing = DEFAULT_TIMING,
+): Crew {
   const [main = assemble()[0]!, ...agents] = crew
   const wanted = [...new Set(agentIds)].slice(0, MAX_AGENTS)
   // 現れかけたばかり（濃さ 0）で引っ込めると、その場でいなくなるので外す
@@ -133,7 +161,7 @@ export function sync(crew: Crew, agentIds: readonly string[], random: () => numb
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
-  if (main.parade !== null) while (at > 0 && !canWalk(kept[at - 1]!)) at -= 1
+  if (main.parade !== null) while (at > 0 && !canWalk(kept[at - 1]!, timing)) at -= 1
   return [main, ...kept.slice(0, at), ...added, ...kept.slice(at)]
 }
 
@@ -141,12 +169,12 @@ export function sync(crew: Crew, agentIds: readonly string[], random: () => numb
  * サブエージェントが 1 体起動した。ほかの顔ぶれはそのまま。
  * sync は一覧に無い者を外さず消し始めるだけなので、消えかけの者は消えかけのまま残る。
  */
-export function join(crew: Crew, id: string, random: () => number, canvas: number): Crew {
+export function join(crew: Crew, id: string, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const present = crew
     .slice(1)
     .filter(m => m.presence.kind === 'arriving' || m.presence.kind === 'here')
     .map(m => m.id)
-  return sync(crew, [...present, id], random, canvas)
+  return sync(crew, [...present, id], random, canvas, timing)
 }
 
 /**
@@ -154,13 +182,13 @@ export function join(crew: Crew, id: string, random: () => number, canvas: numbe
  * いる者だけが歩き、現れかけ・消えかけの者はその場で止まって残りコマを減らす。
  * 消えきった仲間は外す。本体は外さない。
  */
-export function advance(crew: Crew, canvas: number, random: () => number): Crew {
+export function advance(crew: Crew, canvas: number, random: () => number, timing: Timing = DEFAULT_TIMING): Crew {
   const marching = crew[0]?.parade != null
   const next = crew.map(m => {
     const isHere = m.presence.kind === 'here'
     // デシジョンテーブル T2〜T4: 驚いている・居眠りしている間は歩かない。
     // 行列の間は本体も仲間も自分では歩かず、march で進む
-    const walks = canWalk(m) && !marching
+    const walks = canWalk(m, timing) && !marching
     const presence = elapse(m.presence)
     return {
       ...m,
@@ -173,7 +201,7 @@ export function advance(crew: Crew, canvas: number, random: () => number): Crew 
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
-  return marching ? march(kept, canvas, random) : kept
+  return marching ? march(kept, canvas, random, timing) : kept
 }
 
 /**
@@ -197,9 +225,9 @@ function spacing(main: Member, followers: readonly Member[]): number[] {
  * 仲間は本体の後ろに近い順（前にいる者はそのあと、歩けない者は最後。parade-rejoin の R6）に並べ替える。
  * 条件を満たさないときは random を呼ばない。`canvas` は帯の幅（ピクセル）。
  */
-export function lineUp(crew: Crew, random: () => number, canvas: number): Crew {
+export function lineUp(crew: Crew, random: () => number, canvas: number, timing: Timing = DEFAULT_TIMING): Crew {
   const [main, ...friends] = crew
-  if (main === undefined || main.parade !== null || !canWalk(main)) return crew
+  if (main === undefined || main.parade !== null || !canWalk(main, timing)) return crew
   const x = main.wanderer.x
   const room = roomFor(main.mascot, canvas)
   const heading: Heading = room - x >= x ? 'right' : 'left'
@@ -210,7 +238,7 @@ export function lineUp(crew: Crew, random: () => number, canvas: number): Crew {
     const behind = (x - m.wanderer.x) * sign
     return behind >= 0 ? behind : canvas - behind
   }
-  const ordered = [...friends].sort((a, b) => Number(!canWalk(a)) - Number(!canWalk(b)) || rank(a) - rank(b))
+  const ordered = [...friends].sort((a, b) => Number(!canWalk(a, timing)) - Number(!canWalk(b, timing)) || rank(a) - rank(b))
   const line = spacing(main, ordered.filter(m => m.presence.kind === 'here'))
   if (line.length === 0) return crew
   // R1: 本体の後ろに列が収まらなければ始めない（壁ぎわで重ならないように）
@@ -227,8 +255,8 @@ export function lineUp(crew: Crew, random: () => number, canvas: number): Crew {
  * 間が足りていれば今の位置のまま（前へは詰めない。parade-rejoin の R5）。`sign` は行列の向き（右なら 1）。
  * 左へ進む行列では ahead の記号が m の側に出るので、その張り出しも空ける（parade-rejoin の R7）
  */
-function backOff(ahead: Member, m: Member, sign: number, room: number): number {
-  const emote = sign < 0 ? emoteOf(ahead) : null
+function backOff(ahead: Member, m: Member, sign: number, room: number, timing: Timing): number {
+  const emote = sign < 0 ? emoteOf(ahead, timing) : null
   const gap =
     Math.max(MASCOTS[ahead.mascot].width, MASCOTS[m.mascot].width) +
     PARADE_GAP +
@@ -245,10 +273,10 @@ function backOff(ahead: Member, m: Member, sign: number, room: number): number {
  * 前へは進まずに待ち、すぐ前の仲間との間が足りないときだけ下がる。
  * 残りが尽きる・本体が端に着く・本体がいなくなる、のどれかで行列をやめる。
  */
-function march(crew: Crew, canvas: number, random: () => number): Crew {
+function march(crew: Crew, canvas: number, random: () => number, timing: Timing): Crew {
   const [main, ...friends] = crew as [Member, ...Member[]]
   const parade = main.parade!
-  const moves = canWalk(main)
+  const moves = canWalk(main, timing)
   const next = main.wanderer.x + (parade.heading === 'right' ? 1 : -1)
   const atEdge = moves && (next < 0 || next > roomFor(main.mascot, canvas))
   if (parade.left <= 1 || main.presence.kind !== 'here' || atEdge) {
@@ -262,7 +290,7 @@ function march(crew: Crew, canvas: number, random: () => number): Crew {
   // R3: 本体は引き返さず、立ち止まらずに 1 ピクセルずつ進む（驚き・居眠りの間は止まる）
   const wanderer = moves ? { ...main.wanderer, x: next, facing: parade.heading, mode: 'walk' as const, left: 1 } : main.wanderer
   const trail = record(parade, wanderer.x)
-  const walkers = friends.filter(canWalk)
+  const walkers = friends.filter(m => canWalk(m, timing))
   const offsets = spacing(main, walkers)
   // R10: k 番目が道具のぶん下がる距離（自分と前の仲間の張り出しの合計）
   let reaches = 0
@@ -280,9 +308,9 @@ function march(crew: Crew, canvas: number, random: () => number): Crew {
     const target = Math.min(Math.max(slot(trail, offsets[k]!), 0), room)
     // parade-rejoin の R1: 並び順で前に歩けない仲間がいる間は、追い越さないよう前へは進まない。
     // R5: ただし、すぐ前の仲間との間が道具の分を含めて足りなければ、その分だけ下がる
-    const waiting = friends.slice(0, i).some(f => !canWalk(f))
+    const waiting = friends.slice(0, i).some(f => !canWalk(f, timing))
     const ahead = followers[i - 1]
-    const goal = waiting ? backOff(ahead!, m, sign, room) : target
+    const goal = waiting ? backOff(ahead!, m, sign, room, timing) : target
     const dx = Math.min(Math.max(goal - m.wanderer.x, -FOLLOW_PACE), FOLLOW_PACE)
     // R10: 行列の向きと逆へ、道具のぶん下がるだけのときは、向きを変えずに後ずさりする。
     // parade-rejoin の R5: 待っている間は、すぐ前の仲間より後ろにいれば後ずさり、前にいれば（回り込みの途中）進む向きを向く
@@ -300,7 +328,7 @@ function march(crew: Crew, canvas: number, random: () => number): Crew {
 }
 
 /** 描く Actor の一覧。現れかけ・消えかけの者は正面を向いて立ち、濃さと浮きが付く */
-export function actors(crew: Crew): Actor[] {
+export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
   return crew
     .filter(m => m.presence.kind !== 'gone')
     .map(m => {
@@ -312,7 +340,7 @@ export function actors(crew: Crew): Actor[] {
         const shake = !shaking ? 0 : m.startle % 2 === 0 ? 1 : -1
         return { ...base, x: base.x + shake, facing: 'front' as const, pose: 'stand' as const, emote: { kind: 'startle' as const } }
       }
-      if (fading === null && m.idle >= DOZE_FRAMES) {
+      if (fading === null && m.idle >= timing.dozeFrames) {
         // T3: 目を閉じて正面を向き、「z」を上下させる
         const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
         return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
@@ -343,20 +371,21 @@ export function poke(crew: Crew, id: string, failed: boolean): Crew {
 }
 
 /**
- * id の 1 体のツール `tool` の呼び出しが始まった。対応する道具に持ち替え、使っている数を 1 増やす（R1・R2・R17〜R20）。
- * `command` は Bash のコマンド（テストを走らせるならフラスコ）。
+ * id の 1 体のツール `tool` の呼び出しが始まった。対応する道具を求め（持ち替えてから 1.5 秒は今の道具のまま。R23）、
+ * 使っている数を 1 増やす（R1・R2・R17〜R20）。`command` は Bash のコマンド（テストを走らせるならフラスコ）。
+ * 使い終えてからの残りは `timing.propFrames` にする。
  * 対応しないツール・いない id・消えきっている 1 体では何もしない（R3・R10・R15）。
  */
-export function wield(crew: Crew, id: string, tool: string, command?: unknown): Crew {
-  return regrip(crew, id, propFor(tool, command), grab)
+export function wield(crew: Crew, id: string, tool: string, command?: unknown, timing: Timing = DEFAULT_TIMING): Crew {
+  return regrip(crew, id, propFor(tool, command), (grip, kind) => grab(grip, kind, timing.propFrames))
 }
 
 /**
- * id の 1 体のツール `tool` の呼び出しが終わった。対応する道具に持ち替え、使っている数を 1 減らして、
- * 使い終えてからの残りを数え直す（R11・R13）。何もしない場合は wield と同じ。
+ * id の 1 体のツール `tool` の呼び出しが終わった。対応する道具を求め（R23）、使っている数を 1 減らして、
+ * 使い終えてからの残りを `timing.propFrames` に数え直す（R11・R13）。何もしない場合は wield と同じ。
  */
-export function release(crew: Crew, id: string, tool: string, command?: unknown): Crew {
-  return regrip(crew, id, propFor(tool, command), relax)
+export function release(crew: Crew, id: string, tool: string, command?: unknown, timing: Timing = DEFAULT_TIMING): Crew {
+  return regrip(crew, id, propFor(tool, command), (grip, kind) => relax(grip, kind, timing.propFrames))
 }
 
 /** id の 1 体の道具を、道具 `kind` で持ち直す。道具を持つのは活動なので、途切れも 0 に戻す。kind が null なら何もしない */

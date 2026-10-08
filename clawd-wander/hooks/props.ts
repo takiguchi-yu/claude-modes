@@ -3,38 +3,63 @@
 // 編集系のツールはハンマー、調べる系は虫めがね、新しく書くときは鉛筆、仲間を呼ぶときは旗、
 // 待ちを始めるときは砂時計、テストを走らせる Bash はフラスコ。それ以外のツールでは道具を変えない。
 // 使っている間は持ち続け、使い終えてから PROP_FRAMES コマでしまう（Grip）。
-// 仕様は .scratch/props/spec.md（状態遷移表 S1〜S12）。描画も Claude Code の API も知らない。
+// 持ち替えてから SWAP_FRAMES コマは、別の道具を求められても今の道具を見せ続ける。
+// 仕様は .scratch/props/spec.md（状態遷移表 S1〜S18）。描画も Claude Code の API も知らない。
 
 export type PropId = 'hammer' | 'magnifier' | 'flag' | 'hourglass' | 'pencil' | 'flask'
 
-/** 使い終えてから道具を持っているコマ数（10 秒）。使っている間は数えない */
+/** 使い終えてから道具を持っているコマ数の既定（10 秒）。使っている間は数えない */
 export const PROP_FRAMES = 100
+/** 持ち替えてから、次の道具に持ち替えずに見せ続けるコマ数（1.5 秒。R23） */
+export const SWAP_FRAMES = 15
 
 /**
  * 1 体が手に持っている道具。`using` は使っている呼び出しの数（0 以上）、
- * `left` は使い終えてからの残りコマ数（1〜PROP_FRAMES）。
- * `using` が 1 以上なら「使用中」で `left` は減らず、0 なら「余韻」で 1 コマごとに減る
+ * `left` は使い終えてからの残りコマ数（1 以上）。
+ * `using` が 1 以上なら「使用中」で `left` は減らず、0 なら「余韻」で 1 コマごとに減る。
+ * `kind` は見せている道具、`held` はそれに持ち替えてからのコマ数（SWAP_FRAMES で止める）、
+ * `next` は持ち替えを待っている道具（無ければ null）
  */
-export type Grip = { readonly kind: PropId; readonly using: number; readonly left: number }
+export type Grip = {
+  readonly kind: PropId
+  readonly using: number
+  readonly left: number
+  readonly held: number
+  readonly next: PropId | null
+}
 
-/** 呼び出しが始まった（S1・S5・S9）。その道具に持ち替えて、使っている数を 1 増やす */
-export const grab = (grip: Grip | null, kind: PropId): Grip => ({
-  kind,
+/** 見せる道具だけを表す Grip の一部 */
+type Shown = Pick<Grip, 'kind' | 'held' | 'next'>
+
+/** 道具 `kind` を求められた（S13・S14・S16・S17）。持ち替えてから SWAP_FRAMES コマたつまでは、持ち替えを待つ */
+function request(grip: Grip | null, kind: PropId): Shown {
+  if (grip === null) return { kind, held: 0, next: null }
+  if (kind === grip.kind) return { kind, held: grip.held, next: null }
+  return grip.held >= SWAP_FRAMES ? { kind, held: 0, next: null } : { kind: grip.kind, held: grip.held, next: kind }
+}
+
+/** 呼び出しが始まった（S1・S5・S9）。その道具を求め、使っている数を 1 増やし、残りを `frames` にする */
+export const grab = (grip: Grip | null, kind: PropId, frames = PROP_FRAMES): Grip => ({
+  ...request(grip, kind),
   using: (grip?.using ?? 0) + 1,
-  left: PROP_FRAMES,
+  left: frames,
 })
 
-/** 呼び出しが終わった（S2・S6・S10）。その道具に持ち替えて、使っている数を 1 減らし（0 より下げない）、残りを数え直す */
-export const relax = (grip: Grip | null, kind: PropId): Grip => ({
-  kind,
+/** 呼び出しが終わった（S2・S6・S10）。その道具を求め、使っている数を 1 減らし（0 より下げない）、残りを `frames` にする */
+export const relax = (grip: Grip | null, kind: PropId, frames = PROP_FRAMES): Grip => ({
+  ...request(grip, kind),
   using: Math.max(0, (grip?.using ?? 0) - 1),
-  left: PROP_FRAMES,
+  left: frames,
 })
 
-/** 1 コマ進む（S3・S7・S11）。使っている間は減らさず、余韻が尽きたらしまう */
+/** 1 コマ進む（S3・S7・S11・S15・S18）。持ち替えを待っていれば時が来たら持ち替え、使っている間は残りを減らさず、余韻が尽きたらしまう */
 export function decay(grip: Grip | null): Grip | null {
-  if (grip === null || grip.using > 0) return grip
-  return grip.left > 1 ? { ...grip, left: grip.left - 1 } : null
+  if (grip === null) return null
+  const held = Math.min(SWAP_FRAMES, grip.held + 1)
+  const shown: Shown =
+    grip.next !== null && held >= SWAP_FRAMES ? { kind: grip.next, held: 0, next: null } : { kind: grip.kind, held, next: grip.next }
+  if (grip.using > 0) return { ...grip, ...shown }
+  return grip.left > 1 ? { ...grip, ...shown, left: grip.left - 1 } : null
 }
 
 /** ツール名と道具の対応表（R1・R2・R17〜R19）。Bash はコマンドで決める（R20） */
