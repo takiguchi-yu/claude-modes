@@ -91,7 +91,9 @@ export function paint(actors: readonly Actor[], columns: number): string {
   const owner = new Int32Array(width * height).fill(-1)
   // マスに直接置く文字（記号）。ピクセルの絵より手前に描く
   const texts: { col: number; row: number; char: string; color: number }[] = []
-  actors.forEach((actor, index) => {
+  // overlap の R6: 道具を見せている者は手前に描く（奥に入った子の道具が、手前の子のものに見えないように）
+  const ordered = [...actors.filter(actor => actor.prop === undefined), ...actors.filter(actor => actor.prop !== undefined)]
+  ordered.forEach((actor, index) => {
     // この Actor が塗るピクセル（canvas の添字）と、持ち主の色以外で塗るピクセルの色（道具。props の R22）
     const dots: number[] = []
     const tinted = new Map<number, number>()

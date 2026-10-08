@@ -2001,3 +2001,18 @@ test('emotes R11・register: 居眠りの秒数を超えてテストが走って
   expect(asleep()).toBe(true) // 2.5 秒で眠る
   await ui.unmount()
 })
+
+// ---- 道具を見せている者は手前に描く（.scratch/overlap/spec.md の R6） ----------------------
+
+test('overlap R6: 道具を見せている者は、渡した順に関わらず、見せていない者より手前に描く', () => {
+  const ghost = (x: number): Actor => ({ mascot: 'ghost', x, facing: 'front', pose: 'stand', color: BLUE })
+  const holder = clawd(10, { facing: 'left', prop: { kind: 'hourglass', side: 'left', raised: false } })
+  const plain = clawd(10, { facing: 'left' })
+  // 重なっている（道具が無ければ、渡す順で見え方が変わる）
+  expect(paint([plain, ghost(14)], 20)).not.toBe(paint([ghost(14), plain], 20))
+  // 道具を見せている本体は、先に渡しても後に渡しても手前
+  expect(paint([holder, ghost(14)], 20)).toBe(paint([ghost(14), holder], 20))
+  // 道具を見せていない者どうしは、渡した順のまま（R2）
+  expect(paint([ghost(4), ghost(8)], 20)).not.toBe(paint([ghost(8), ghost(4)], 20))
+})
+
