@@ -8,6 +8,7 @@
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
 // 本体がひとりのときは、ときどき波乗りする（paddleOut・ride。.scratch/surf/spec.md）。
+// テストが通ると紙吹雪を降らせる（celebrate。.scratch/cheer/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
 
@@ -17,6 +18,7 @@ import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
 import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
 import { catchWave, ebb, fadeOf, MIN_RIDE, recede, SURF_CHANCE, SURF_PACE, type Surf } from './surf'
+import { CHEER_FRAMES } from './cheer'
 import { poseOf, start, step, type Wanderer } from './wander'
 
 export const MAIN = 'main'
@@ -45,6 +47,8 @@ export type Member = {
   readonly parade: Parade | null
   /** 波乗り。本体だけが持ち、仲間は常に null（.scratch/surf/spec.md） */
   readonly surf: Surf | null
+  /** 紙吹雪の残りコマ数。0 なら降っていない（.scratch/cheer/spec.md） */
+  readonly cheer: number
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
@@ -93,7 +97,7 @@ const PARADE_PAUSE = { min: 5, max: 15 }
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0 },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -165,7 +169,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, surf: null, cheer: 0 }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -209,6 +213,7 @@ export function advance(crew: Crew, canvas: number, random: () => number, timing
       // props の R14・emotes の R13: 消えきったら、使っている呼び出しが残っていても道具をしまい、呼び出しも数え直す
       prop: presence.kind === 'gone' ? null : decay(m.prop),
       busy: presence.kind === 'gone' ? 0 : m.busy,
+      cheer: Math.max(0, m.cheer - 1),
     }
   })
   const kept = next.filter(m => m.id === MAIN || m.presence.kind !== 'gone')
@@ -389,36 +394,47 @@ export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
   return crew
     .filter(m => m.presence.kind !== 'gone')
     .map(m => {
-      const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color }
-      const fading = look(m.presence)
-      if (fading === null && m.startle > 0) {
-        // T2: 「!」を出す。最初の SHAKE_FRAMES コマは 1 コマごとに左右へ 1 ピクセル震える
-        const shaking = m.startle > STARTLE_FRAMES - SHAKE_FRAMES
-        const shake = !shaking ? 0 : m.startle % 2 === 0 ? 1 : -1
-        return { ...base, x: base.x + shake, facing: 'front' as const, pose: 'stand' as const, emote: { kind: 'startle' as const } }
-      }
-      if (fading === null && m.idle >= timing.dozeFrames) {
-        // T3: 目を閉じて正面を向き、「z」を上下させる
-        const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
-        return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
-      }
-      if (fading === null && m.surf !== null) {
-        // surf の R8・R9: 板に乗って向かう側を向く。道具は描かない
-        const surf = { heading: m.surf.heading, fade: fadeOf(m.surf) }
-        return { ...base, facing: m.surf.heading, pose: 'stand' as const, surf }
-      }
-      if (fading === null) {
-        const pose = poseOf(m.wanderer)
-        const facing = m.wanderer.facing
-        if (m.prop === null) return { ...base, facing, pose }
-        // props の T4: 向いている側に道具を持つ。ハンマーは脚のコマに合わせて上下する（R5・R6）
-        const side = facing === 'left' ? ('left' as const) : ('right' as const)
-        const raised = m.prop.kind === 'hammer' && pose === 'stepB'
-        return { ...base, facing, pose, prop: { kind: m.prop.kind, side, raised } }
-      }
-      return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
+      const actor = actorOf(m, timing)
+      // cheer の R2・R4・R5: 紙吹雪は、出入りの途中でなければ、ほかの見え方に重ねて描く
+      return m.cheer > 0 && look(m.presence) === null ? { ...actor, confetti: { left: m.cheer } } : actor
     })
 }
+
+/** 1 体の見え方（紙吹雪を除く） */
+function actorOf(m: Member, timing: Timing): Actor {
+  const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color }
+  const fading = look(m.presence)
+  if (fading === null && m.startle > 0) {
+    // T2: 「!」を出す。最初の SHAKE_FRAMES コマは 1 コマごとに左右へ 1 ピクセル震える
+    const shaking = m.startle > STARTLE_FRAMES - SHAKE_FRAMES
+    const shake = !shaking ? 0 : m.startle % 2 === 0 ? 1 : -1
+    return { ...base, x: base.x + shake, facing: 'front' as const, pose: 'stand' as const, emote: { kind: 'startle' as const } }
+  }
+  if (fading === null && m.idle >= timing.dozeFrames) {
+    // T3: 目を閉じて正面を向き、「z」を上下させる
+    const high = Math.floor(m.idle / Z_EVERY) % 2 === 0
+    return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
+  }
+  if (fading === null && m.surf !== null) {
+    // surf の R8・R9: 板に乗って向かう側を向く。道具は描かない
+    const surf = { heading: m.surf.heading, fade: fadeOf(m.surf) }
+    return { ...base, facing: m.surf.heading, pose: 'stand' as const, surf }
+  }
+  if (fading === null) {
+    const pose = poseOf(m.wanderer)
+    const facing = m.wanderer.facing
+    if (m.prop === null) return { ...base, facing, pose }
+    // props の T4: 向いている側に道具を持つ。ハンマーは脚のコマに合わせて上下する（R5・R6）
+    const side = facing === 'left' ? ('left' as const) : ('right' as const)
+    const raised = m.prop.kind === 'hammer' && pose === 'stepB'
+    return { ...base, facing, pose, prop: { kind: m.prop.kind, side, raised } }
+  }
+  return { ...base, facing: 'front' as const, pose: 'stand' as const, ...fading }
+}
+
+/** id の 1 体のテストが通った（cheer の R1）。紙吹雪を CHEER_FRAMES 降らせる。いない id・消えきっている 1 体では何もしない */
+export const celebrate = (crew: Crew, id: string): Crew =>
+  crew.map(m => (m.id !== id || m.presence.kind === 'gone' ? m : { ...m, cheer: CHEER_FRAMES }))
 
 /**
  * id の 1 体のツールの呼び出しが始まった。動いている呼び出しの数を 1 増やす（emotes の R12）。

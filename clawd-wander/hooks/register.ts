@@ -13,10 +13,10 @@
 // 見張り（keepAlive）: タイマーは黙って終わることがある（$.clock.every は 1 回拒否されると終わる）。
 //   タイマーは 1 秒ごとに鼓動（lastBeat）を残す。帯の描き直しとツール呼び出しのたびに、
 //   鼓動が STALL_MS 途絶えていればタイマーを張り直す。
-// tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚く。呼び出しが動いている間は眠らない）。
+// tool.call: 呼び出し元の 1 体に活動を知らせる（居眠りから起き、失敗なら驚き、テストが通れば紙吹雪。呼び出しが動いている間は眠らない）。
 //   編集系のツールならハンマー、調べる系なら虫めがね、Write は鉛筆、Agent は旗、待ちを始めるツールは砂時計、
 //   テストを走らせる Bash はフラスコを、使っている間と使い終えてから 10 秒（/config で変えられる）持たせる。
-//   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。
+//   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。紙吹雪は .scratch/cheer/spec.md。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // 波乗り: 本体がひとりのときは、ときどき波に乗って帯を滑る（.scratch/surf/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
@@ -30,6 +30,7 @@ import {
   actors,
   advance,
   assemble,
+  celebrate,
   type Crew,
   disengage,
   engage,
@@ -47,6 +48,7 @@ import {
   timingOf,
   wield,
 } from './crew'
+import { propFor } from './props'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -111,7 +113,10 @@ export const register: Register = (on, options) => {
     if (next.signal.aborted) end()
     try {
       const result = await next(e)
-      crew = poke(crew, id, result.deny !== undefined || result.isError === true)
+      const failed = result.deny !== undefined || result.isError === true
+      crew = poke(crew, id, failed)
+      // cheer の R1・R3: テストを走らせる Bash が成功したら、紙吹雪を降らせる
+      if (!failed && propFor(e.tool, command) === 'flask') crew = celebrate(crew, id)
       return result
     } finally {
       end()

@@ -7,6 +7,7 @@ import { type Facing, MASCOT_HEIGHT, type MascotId, MASCOTS, type Pose } from '.
 import type { Heading } from './parade'
 import { PROP_GAP, propPixels, type PropId } from './props'
 import { surfPixels } from './surf'
+import { confettiPixels } from './cheer'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -34,6 +35,8 @@ export type Actor = {
   readonly prop?: { readonly kind: PropId; readonly side: 'left' | 'right'; readonly raised: boolean }
   /** 波乗り（.scratch/surf/spec.md の R9）。1 ピクセル浮かせて脚を描かず、板・水面・波を描く。fade は波と水面の濃さ */
   readonly surf?: { readonly heading: Heading; readonly fade: number }
+  /** 紙吹雪（.scratch/cheer/spec.md）。left は残りコマ */
+  readonly confetti?: { readonly left: number }
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
@@ -145,6 +148,15 @@ export function paint(actors: readonly Actor[], columns: number): string {
     if (actor.surf !== undefined) {
       // 板・水面・波は本体の塗りとして描く（重なりの輪郭は本体と一緒に扱う）
       for (const { dx, y, color } of surfPixels(actor.surf.heading, actor.surf.fade)) {
+        const x = actor.x + dx
+        if (x < 0 || x >= width || y < 0 || y >= height) continue
+        dots.push(y * width + x)
+        tinted.set(y * width + x, color)
+      }
+    }
+    if (actor.confetti !== undefined) {
+      // 紙吹雪は持ち主の塗りとして描く（浮きに関係なく帯の上から落ちる）
+      for (const { dx, y, color } of confettiPixels(actor.confetti.left, MASCOTS[actor.mascot].width, actor.x)) {
         const x = actor.x + dx
         if (x < 0 || x >= width || y < 0 || y >= height) continue
         dots.push(y * width + x)

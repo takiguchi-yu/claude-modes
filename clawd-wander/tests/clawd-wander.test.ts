@@ -6,6 +6,7 @@ import {
   advance,
   agentCount,
   assemble,
+  celebrate,
   type Crew,
   DEFAULT_TIMING,
   disengage,
@@ -34,6 +35,7 @@ import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '.
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 import { EBB_FRAMES, MIN_RIDE, SURF_CHANCE, SURF_PACE, surfPixels } from '../hooks/surf'
+import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -2199,4 +2201,90 @@ test('surf R12・T1・register: surf が false なら、10 分ひとりで歩い
 
 test('surf R1・R12・register: surf がオン（既定）なら、10 分ひとりで歩く間に波乗りする（しない確率は約 e⁻¹⁰）', { options: { doze_seconds: 3600 } }, async ($, on) => {
   expect(await surfsWithin($, on, 10)).toBe(true)
+})
+
+// ---- テストが通ったら紙吹雪（.scratch/cheer/spec.md） --------------------------------
+
+/**
+ * 紙吹雪が描かれているか。桃（鉛筆の消しゴムと同じ色）と青（波乗りの水と同じ色）は、鉛筆も波乗りも無い場面では紙吹雪にしか出ない。
+ * 紙片が道具や「!」と同じマスに入ると、そのマスでは色が混ざって消えることがあるので、2 色のどちらかで見る
+ */
+const hasConfetti = (cells: string) => cellColors(cells).has(0xf08fa8) || cellColors(cells).has(0x4a90d9)
+
+test('cheer R1・契約 celebrate: 呼び出し元に CHEER_FRAMES 降らせ、降っている間なら戻す。いない id・消えきった 1 体では何もしない', () => {
+  expect(CHEER_FRAMES).toBe(15)
+  const crew = hereMain()
+  const snapshot = JSON.stringify(crew)
+  const cheered = celebrate(crew, MAIN)
+  expect(JSON.stringify(crew)).toBe(snapshot)
+  expect(cheered[0]!.cheer).toBe(CHEER_FRAMES)
+  expect(advanceBy(cheered, 5, 200)[0]!.cheer).toBe(CHEER_FRAMES - 5)
+  expect(celebrate(advanceBy(cheered, 5, 200), MAIN)[0]!.cheer).toBe(CHEER_FRAMES) // 戻す
+  expect(celebrate(crew, 'nobody')).toEqual(crew)
+  expect(celebrate(assemble(), MAIN)[0]!.cheer).toBe(0) // 消えきっている
+})
+
+test('cheer R2・契約 confettiPixels: 8 枚・5 色・2×2 でマスにそろい、同じマスに 2 枚入らず、3 コマで 1 マス落ち、下端で消える', () => {
+  for (const x of [10, 11]) {
+    const frames = Array.from({ length: CHEER_FRAMES }, (_, i) => confettiPixels(CHEER_FRAMES - i, 18, x))
+    expect(new Set(frames.flat().map(p => p.color)).size).toBe(5)
+    for (const frame of frames) {
+      expect(frame.length % 4).toBe(0) // 2×2 の紙片だけ
+      expect(frame.every(p => p.y >= 0 && p.y <= 5)).toBe(true)
+      // マス（2×2）ごとに 1 色・4 ピクセルちょうど
+      const cells = new Map<string, { color: number; count: number }>()
+      for (const p of frame) {
+        const key = `${Math.floor((x + p.dx) / 2)},${Math.floor(p.y / 2)}`
+        const cell = cells.get(key) ?? { color: p.color, count: 0 }
+        expect(cell.color).toBe(p.color)
+        cells.set(key, { color: p.color, count: cell.count + 1 })
+      }
+      expect([...cells.values()].every(c => c.count === 4)).toBe(true)
+    }
+    expect(Math.max(...frames.map(f => f.length / 4))).toBe(8) // 8 枚がそろって見えるコマがある
+    // 最初の紙片（いちばん左の赤）は 3 コマで 1 マス落ちる。赤はもう 1 枚（6 枚目）あるので、いちばん左のものを見る
+    const redRow = (i: number) => {
+      const reds = frames[i]!.filter(p => p.color === 0xe04f4f)
+      const leftmost = Math.min(...reds.map(p => p.dx))
+      return Math.min(...reds.filter(p => p.dx <= leftmost + 1).map(p => p.y))
+    }
+    expect([redRow(0), redRow(2), redRow(3), redRow(6)]).toEqual([0, 0, 2, 4])
+    expect(confettiPixels(1, 18, x)).toEqual([]) // 最後のコマにはすべて落ちきっている
+  }
+})
+
+test('cheer R4・R5: 紙吹雪は道具や歩きに重ねて描き、出入りの途中は描かない', () => {
+  const held = celebrate(wield(hereMain(), MAIN, 'Bash', 'npm test'), MAIN)
+  const actor = actors(held)[0]!
+  expect(actor.confetti).toEqual({ left: CHEER_FRAMES })
+  expect(actor.prop?.kind).toBe('flask') // R5: 道具はそのまま
+  expect(actors(celebrate(setMain(hereMain(), false), MAIN))[0]!.confetti).toBeUndefined() // R4
+  expect([0, 1, 2, 3].some(i => hasConfetti(paint(actors(advanceBy(held, i, 200)), 40)))).toBe(true)
+})
+
+test('cheer R1・R3・register: テストの Bash が成功したときだけ紙吹雪を降らせる', NO_SURF, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  on('agent.list', async () => ({ value: [] }))
+  let outcome: unknown = { result: 'ok' }
+  on('tool.call', async () => outcome as never)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 60), surface: 'terminal' })
+  await clock.advance(1500) // 現れきる
+  const confettiAfter = async (input: unknown) => {
+    const start = frames.length
+    await $.tool.call(input as never)
+    await clock.advance(1600)
+    return frames.slice(start).some(hasConfetti)
+  }
+  expect(await confettiAfter({ tool: 'Bash', command: 'git status' })).toBe(false) // R3: テストでない
+  outcome = { isError: true, result: 'failed' }
+  expect(await confettiAfter({ tool: 'Bash', command: 'npm test' })).toBe(false) // R3: 失敗
+  outcome = { result: 'ok' }
+  expect(await confettiAfter({ tool: 'Bash', command: 'npm test' })).toBe(true) // R1
+  await ui.unmount()
 })
