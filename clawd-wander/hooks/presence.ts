@@ -10,7 +10,7 @@ export const FADE_FRAMES = 12
 /** 何コマごとに 1 ピクセル浮くか */
 const LIFT_EVERY = 3
 /** 跳ねる間の浮き（残りコマ 4・3・2・1 の順） */
-const LEAP_LIFTS = [1, 2, 2, 1] as const
+const LEAP_LIFTS = [1, 1, 1, 1] as const
 export const LEAP_FRAMES = LEAP_LIFTS.length
 
 export type Presence =

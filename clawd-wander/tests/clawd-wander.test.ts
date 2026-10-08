@@ -494,7 +494,7 @@ test('R8・emotes R1・S8\'・S15: 本体は作業が終わると跳ねてから
   expect(opacities).toHaveLength(LEAP_FRAMES + FADE_FRAMES)
   // 跳ねる 4 コマ: 濃さ 1 のまま 1・2・2・1 ピクセル浮く
   expect(opacities.slice(0, LEAP_FRAMES)).toEqual([1, 1, 1, 1])
-  expect(lifts.slice(0, LEAP_FRAMES)).toEqual([1, 2, 2, 1])
+  expect(lifts.slice(0, LEAP_FRAMES)).toEqual([1, 1, 1, 1])
   // そのあと F コマで薄くなりながら浮き上がる
   const fading = opacities.slice(LEAP_FRAMES)
   expect(fading[0]).toBe(1)
