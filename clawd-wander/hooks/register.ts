@@ -19,7 +19,7 @@
 //   持ち替えてから 1.5 秒は次の道具に替えない（.scratch/props/spec.md）。紙吹雪は .scratch/cheer/spec.md。
 // session.compact: 会話の圧縮の間、そのループのマスコットをぺしゃんこにする（.scratch/squash/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
-// ひとり遊び: 本体がひとりのときは、ときどき波乗り・小踊り・蝶々のどれかをする（.scratch/play/spec.md）。
+// ひとり遊び: 本体がひとりのときは、ときどき波乗りか蝶々を追いかける遊びをする（.scratch/play/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る

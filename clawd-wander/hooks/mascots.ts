@@ -5,8 +5,8 @@
 // 左右で形が違う絵は右向きに描いておき、左を向くときは反転する。
 
 export type Facing = 'left' | 'front' | 'right'
-/** sleep は種類ごとに描いた小さな寝姿（高さ 4・幅は元の 8 割以下・目を閉じる）。banzai は両手を上げた姿（Clawd だけ。ほかは直立） */
-export type Pose = 'stand' | 'stepA' | 'stepB' | 'sleep' | 'banzai'
+/** sleep は種類ごとに描いた小さな寝姿（高さ 4・幅は元の 8 割以下・目を閉じる） */
+export type Pose = 'stand' | 'stepA' | 'stepB' | 'sleep'
 
 export type MascotId = 'clawd' | 'ghost' | 'robot' | 'alien' | 'mushroom' | 'dino' | 'cat'
 
@@ -33,7 +33,7 @@ function nap(sleeping: readonly string[], width: number): boolean[][] {
   return [...Array.from({ length: MASCOT_HEIGHT - sleeping.length }, () => [...blank]), ...sleeping.map(row)]
 }
 
-/** 歩きの 2 コマと寝姿から作る。stand と banzai は stepA と同じ絵 */
+/** 歩きの 2 コマと寝姿から作る。stand は stepA と同じ絵 */
 function walker(stepA: readonly string[], stepB: readonly string[], sleeping: readonly string[], facesRight = false): Mascot {
   const width = stepA[0]!.length
   const frames = { stepA: parse(stepA), stepB: parse(stepB), sleep: nap(sleeping, width) }
@@ -67,7 +67,6 @@ const CLAWD_EYES: Record<Facing, readonly [number, number]> = {
 // 脚の x。stepB は stepA から 1 ピクセルずつ内外に入れ替えて足踏みに見せる。
 const CLAWD_LEGS: Record<Pose, readonly number[]> = {
   stand: [4, 6, 11, 13],
-  banzai: [4, 6, 11, 13],
   sleep: [4, 6, 11, 13],
   stepA: [4, 6, 11, 13],
   stepB: [5, 7, 10, 12],
@@ -86,14 +85,6 @@ const clawd: Mascot = {
     body[1]![rightEye] = false
     const legs = Array.from({ length: 18 }, (_, x) => CLAWD_LEGS[pose].includes(x))
     const blank = Array.from({ length: 18 }, () => false)
-    if (pose === 'banzai') {
-      // 小踊りのバンザイ（.scratch/dance/spec.md の R3）: 胴の 3 行目の腕を消し、斜めに上げた手を描く
-      for (const x of [1, 2, 15, 16]) body[2]![x] = false
-      blank[1] = true
-      blank[16] = true
-      body[0]![2] = true
-      body[0]![15] = true
-    }
     return [blank, ...body, legs]
   },
 }

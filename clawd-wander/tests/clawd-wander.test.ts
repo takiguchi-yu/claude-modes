@@ -40,7 +40,6 @@ import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/spr
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
 import { EBB_FRAMES, MIN_RIDE, SURF_PACE, surfPixels } from '../hooks/surf'
 import { PLAY_CHANCE, playable } from '../hooks/play'
-import { DANCE_FRAMES, dancePose } from '../hooks/dance'
 import { butterflyPixels, CHASE_FRAMES, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 import { flatten, SPRING_FRAMES } from '../hooks/squash'
@@ -2055,13 +2054,13 @@ const surfing = (x = 50): Crew => beginPlay(soloMain(x), 'surf', 200)
 
 test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえば始め、始められる遊びから乱数で選ぶ。T2〜T5 では乱数を使わない', () => {
   expect([PLAY_CHANCE, MIN_RIDE, MIN_CHASE, SURF_PACE, EBB_FRAMES]).toEqual([1 / 600, 30, 60, 3, 6])
-  expect(playable(50, 182)).toEqual(['surf', 'dance', 'butterfly'])
-  expect(playable(20, 42)).toEqual(['dance']) // 広いほうの奥行き 22 では波乗りも蝶々もできない
-  expect(playable(10, 50)).toEqual(['surf', 'dance']) // 奥行き 40
+  expect(playable(50, 182)).toEqual(['surf', 'butterfly'])
+  expect(playable(20, 42)).toEqual([]) // 広いほうの奥行き 22 では波乗りも蝶々もできない（T5）
+  expect(playable(10, 50)).toEqual(['surf']) // 奥行き 40
   // T7: 1 回目の乱数で始めるかを、2 回目でどれにするかを決める
   const crew = soloMain(50)
   const snapshot = JSON.stringify(crew)
-  for (const [pick, kind] of [[0, 'surf'], [0.5, 'dance'], [0.99, 'butterfly']] as const) {
+  for (const [pick, kind] of [[0, 'surf'], [0.99, 'butterfly']] as const) {
     const values = [0, pick]
     let calls = 0
     const started = startPlay(crew, () => values[calls++]!, 200)
@@ -2069,20 +2068,21 @@ test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえ�
     expect(calls).toBe(2)
   }
   expect(JSON.stringify(crew)).toBe(snapshot) // crew を変更しない
-  // 波乗り・蝶々は広いほうを向く。小踊りはその場で止まる
+  // 波乗り・蝶々は広いほうを向く
   expect(beginPlay(soloMain(50), 'surf', 200)[0]!).toMatchObject({ play: { kind: 'surf', heading: 'right', ebb: null }, wanderer: { facing: 'right' } })
   expect(beginPlay(soloMain(150), 'butterfly', 200)[0]!.play).toMatchObject({ kind: 'butterfly', heading: 'left' })
-  expect(beginPlay(soloMain(50), 'dance', 200)[0]!).toMatchObject({ play: { kind: 'dance', left: DANCE_FRAMES }, wanderer: { mode: 'pause' } })
   // T6: 乱数が外れると始めない（乱数は 1 回）
   const miss = counted(PLAY_CHANCE)
   expect(startPlay(crew, miss.random, 200)).toBe(crew)
   expect(miss.calls()).toBe(1)
-  // T2〜T4: 始めず、乱数も使わない
+  // T2〜T5: 始めず、乱数も使わない
   const none = counted(0)
   const notAlone = sync(soloMain(), ['a'], () => 0, 200)
   const startled = poke(soloMain(), MAIN, true)
   const busy = surfing()
   for (const c of [notAlone, startled, busy]) expect(startPlay(c, none.random, 200)).toBe(c)
+  const cramped = soloMain(20)
+  expect(startPlay(cramped, none.random, 18 + 42)).toBe(cramped) // T5: 始められる遊びが無い
   expect(none.calls()).toBe(0)
 })
 
@@ -2490,13 +2490,12 @@ test('squash R7・register: 作業が終わってから圧縮が終わっても�
   await ui.unmount()
 })
 
-// ---- ひとり遊び（.scratch/play/spec.md）・小踊り（.scratch/dance/spec.md）・蝶々（.scratch/butterfly/spec.md） ----
+// ---- ひとり遊び（.scratch/play/spec.md）・蝶々（.scratch/butterfly/spec.md） ----
 
-const dancing = (x = 50): Crew => beginPlay(soloMain(x), 'dance', 200)
 const chasing = (x = 50): Crew => beginPlay(soloMain(x), 'butterfly', 200)
 
 test('play R3・R4・R6: 遊びの間は行列もほかの遊びも始めず、歩けなくなる・引っ込められるとやめ、終わると立ち止まる', () => {
-  for (const begin of [surfing, dancing, chasing]) {
+  for (const begin of [surfing, chasing]) {
     const crew = begin(50)
     expect(startPlay(crew, () => 0, 200)).toBe(crew) // R3: ほかの遊びは始めない
     const friends = sync(crew, ['a'], () => 0, 200).map(m => (m.id === 'a' ? { ...m, presence: HERE } : m))
@@ -2506,33 +2505,9 @@ test('play R3・R4・R6: 遊びの間は行列もほかの遊びも始めず、�
     expect(advance(setMain(crew, false), 200, () => 0.5)[0]!.play).toBeNull() // R4: 引っ込められる
   }
   // R6: どの遊びも、終わると立ち止まってから歩き出す
-  const danced = advanceBy(dancing(), DANCE_FRAMES, 200)
-  expect(danced[0]!.play).toBeNull()
-  expect(danced[0]!.wanderer.mode).toBe('pause')
-})
-
-test('dance R1・R2・R4・R5・R6: その場で 24 コマ踊り、拍ごとにバンザイ（左・右・左・右）と直立をくり返し、道具を描かない', () => {
-  const crew = wield(dancing(50), MAIN, 'Edit')
-  const poses = Array.from({ length: DANCE_FRAMES }, (_, i) => actors(advanceBy(crew, i, 200))[0]!)
-  expect(poses.every(a => a.x === 50)).toBe(true) // R1: その場で
-  expect(poses.every(a => a.prop === undefined)).toBe(true) // R4
-  const beats = poses.filter((_, i) => i % 6 === 0).map(a => [a.pose, a.facing])
-  expect(beats).toEqual([['banzai', 'left'], ['banzai', 'right'], ['banzai', 'left'], ['banzai', 'right']])
-  expect(poses.filter((_, i) => i % 6 === 3).every(a => a.pose === 'stand' && a.facing === 'front')).toBe(true)
-  expect(dancePose({ left: 1 })).toEqual({ pose: 'stand', facing: 'front' })
-  expect(advanceBy(crew, DANCE_FRAMES, 200)[0]!.play).toBeNull() // R5
-  expect(advance(sync(dancing(), ['a'], () => 0, 200), 200, () => 0.5)[0]!.play).toBeNull() // R6
-})
-
-test('dance R3: バンザイの絵は手が上にあり、胴の 3 行目の腕の張り出しが無い。ほかのマスコットは直立と同じ', () => {
-  const up = MASCOTS.clawd.draw('front', 'banzai')
-  const stand = MASCOTS.clawd.draw('front', 'stand')
-  expect(up[0]![1]).toBe(true) // 左手
-  expect(up[0]![16]).toBe(true) // 右手
-  expect([1, 2, 15, 16].map(x => up[3]![x])).toEqual([false, false, false, false]) // 腕を消す
-  expect([1, 2, 15, 16].map(x => stand[3]![x])).toEqual([true, true, true, true])
-  expect(up[5]).toEqual(stand[5]) // 脚は直立と同じ
-  expect(MASCOTS.ghost.draw('front', 'banzai')).toEqual(MASCOTS.ghost.draw('front', 'stand'))
+  const chased = advanceBy(chasing(), CHASE_FRAMES + 2 + WATCH_FRAMES, 200)
+  expect(chased[0]!.play).toBeNull()
+  expect(chased[0]!.wanderer.mode).toBe('pause')
 })
 
 test('butterfly R1・R2・R8・契約 butterflyPixels: 本体の前 12 ピクセル先の最上段に出て、2 ピクセルずつ進み、段と羽を替え、マスにそろえて黄色で描く', () => {

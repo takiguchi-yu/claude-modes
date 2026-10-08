@@ -18,7 +18,7 @@
     "play": {
       "type": "boolean",
       "title": "Solo play",
-      "description": "When Clawd is alone, he now and then surfs, dances, or chases a butterfly.",
+      "description": "When Clawd is alone, he now and then surfs or chases a butterfly.",
       "default": true
     }
   }

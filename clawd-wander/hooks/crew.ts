@@ -7,7 +7,7 @@
 // ツールの呼び出し（poke）が途切れると居眠りし、失敗すると驚く。呼び出しが動いている間（engage〜disengage）は眠らない（.scratch/emotes/spec.md）。
 // ツールを使っている間と、使い終えてからしばらく、そのツールの道具を持つ（wield・release。.scratch/props/spec.md）。
 // ときどき仲間が本体のあとを一列についていく（lineUp。.scratch/parade/spec.md）。
-// 本体がひとりのときは、ときどきひとり遊び（波乗り・小踊り・蝶々）をする（startPlay・playStep。.scratch/play/spec.md）。
+// 本体がひとりのときは、ときどきひとり遊び（波乗り・蝶々）をする（startPlay・playStep。.scratch/play/spec.md）。
 // テストが通ると紙吹雪を降らせ（celebrate。.scratch/cheer/spec.md）、会話の圧縮の間はぺしゃんこになる（squeeze・unsqueeze。.scratch/squash/spec.md）。
 // 先頭は常に本体（MAIN）。本体は消えても顔ぶれに残り、次に作業が始まると同じ場所に戻る。
 // Claude Code の API は知らない。
@@ -19,7 +19,6 @@ import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
 import { catchWave, ebb, fadeOf, recede, SURF_PACE } from './surf'
 import { flutter, GAP, launch, scare, WIDTH as BUTTERFLY_WIDTH } from './butterfly'
-import { dancePose, startDance, stepDance } from './dance'
 import { type Play, PLAY_CHANCE, type PlayKind, playable } from './play'
 import { CHEER_FRAMES } from './cheer'
 import { liftOf, PRESSED, settle, type Squash, unpress } from './squash'
@@ -272,16 +271,9 @@ export function beginPlay(crew: Crew, kind: PlayKind, canvas: number): Crew {
   const x = main.wanderer.x
   const heading = widerSide(x, roomFor(main.mascot, canvas))
   const front = heading === 'right' ? x + MASCOTS[main.mascot].width : x
-  const play: Play =
-    kind === 'surf'
-      ? { kind, ...catchWave(heading) }
-      : kind === 'dance'
-        ? { kind, ...startDance() }
-        : { kind, ...launch(front, heading) }
-  // dance の R1: 小踊りはその場で止まる。波乗り・蝶々は向かう側を向く
-  const wanderer: Wanderer =
-    kind === 'dance' ? { ...main.wanderer, mode: 'pause', left: 1 } : { ...main.wanderer, facing: heading }
-  return [{ ...main, wanderer, play }, ...rest]
+  const play: Play = kind === 'surf' ? { kind, ...catchWave(heading) } : { kind, ...launch(front, heading) }
+  // 波乗り・蝶々は向かう側を向く
+  return [{ ...main, wanderer: { ...main.wanderer, facing: heading }, play }, ...rest]
 }
 
 /** ひとり遊びを終え、少し立ち止まってから歩き出す（play の R6） */
@@ -301,11 +293,6 @@ function playStep(main: Member, crowded: boolean, canvas: number, random: () => 
   switch (play.kind) {
     case 'surf':
       return ride(main, play, crowded, canvas, random)
-    case 'dance': {
-      // dance の R6: 仲間が加わったらすぐやめる。R5: 踊り終えたら終わる
-      const next = crowded ? null : stepDance(play)
-      return next === null ? settleDown(main, random) : { ...main, play: { kind: 'dance', ...next } }
-    }
     case 'butterfly':
       return chase(main, play, crowded, canvas, random)
   }
@@ -513,14 +500,11 @@ function actorOf(m: Member, timing: Timing): Actor {
     return { ...base, facing: 'front' as const, pose: 'sleep' as const, emote: { kind: 'doze' as const, high } }
   }
   if (fading === null && m.play !== null) {
-    // ひとり遊びの間は道具を描かない（surf の R8・dance の R4・butterfly の R7）
+    // ひとり遊びの間は道具を描かない（surf の R8・butterfly の R7）
     switch (m.play.kind) {
       case 'surf':
         // surf の R9: 板に乗って向かう側を向く
         return { ...base, facing: m.play.heading, pose: 'stand' as const, surf: { heading: m.play.heading, fade: fadeOf(m.play) } }
-      case 'dance':
-        // dance の R2・R3: バンザイと直立をくり返す
-        return { ...base, ...dancePose(m.play) }
       case 'butterfly':
         // butterfly の R3・R8: 追いかけて歩き（見送る間は正面で直立）、蝶々を描く
         return { ...base, facing: m.wanderer.facing, pose: poseOf(m.wanderer), butterfly: m.play }
