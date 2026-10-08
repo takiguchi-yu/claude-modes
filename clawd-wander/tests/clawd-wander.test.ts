@@ -733,6 +733,12 @@ test('R20: テストを走らせるコマンドの判定', () => {
     'cat <<< "hello"\nnpm test', // ヒアストリング <<< は heredoc ではない
     '(cd app && npm test)', // 括弧でも区切る
     'npx jest@29 --ci', // バージョン付きの名前
+    'tox -e py311', // 2026-10-08 に追加した名前
+    'uvx tox',
+    'cargo nextest run',
+    'node --test', // --test
+    'LC_ALL=C npm test', // 先頭の環境変数の設定は飛ばす
+    'mkdir -p out && pytest', // 除外するコマンドの区切りのあとは数える
   ]
   const others = [
     'ls',
@@ -755,6 +761,20 @@ test('R20: テストを走らせるコマンドの判定', () => {
     'git commit -m "first line \\\nrun the test suite"', // 引用符の中の \ と改行
     'npm run build & echo test', // 単独の & でも区切る
     '',
+    'mkdir test', // ファイル・ブランチの名前を扱うだけのコマンド
+    'cd test && ls',
+    'git checkout test',
+    'git grep test',
+    'rm -rf test',
+    'touch test',
+    'LC_ALL=C grep -r test src', // 先頭の環境変数の設定を飛ばして 1 語目を見る
+    'pip install pytest', // 道具を入れる・外すだけ
+    'python -m pip install pytest',
+    'npm i -D vitest',
+    'npm install --save-dev jest',
+    'yarn add -D jest',
+    'cargo install cargo-nextest',
+    'composer require --dev phpunit/phpunit',
   ]
   expect(tests.filter(c => !runsTests(c))).toEqual([])
   expect(others.filter(c => runsTests(c))).toEqual([])

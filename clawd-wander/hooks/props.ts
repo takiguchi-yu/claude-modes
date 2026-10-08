@@ -79,9 +79,16 @@ const TOOL_PROPS: ReadonlyMap<string, PropId> = new Map<string, PropId>([
 ])
 
 /** テストを実行するコマンドの名前。どの位置にあってもテストとみなす（R20） */
-const TEST_RUNNERS: ReadonlySet<string> = new Set(['pytest', 'jest', 'vitest', 'mocha', 'rspec', 'phpunit', 'unittest'])
-/** 文字列を扱うだけのコマンド。引数に test があってもテストではない（R20） */
-const TEXT_COMMANDS: ReadonlySet<string> = new Set(['grep', 'rg', 'echo', 'printf', 'cat', 'ls', 'find', 'sed', 'awk', 'head', 'tail'])
+const TEST_RUNNERS: ReadonlySet<string> = new Set(['pytest', 'jest', 'vitest', 'mocha', 'rspec', 'phpunit', 'unittest', 'tox', 'nextest'])
+/** 文字列・ファイル・ブランチの名前を扱うだけのコマンド。引数に test があってもテストではない（R20） */
+const TEXT_COMMANDS: ReadonlySet<string> = new Set([
+  'grep', 'rg', 'echo', 'printf', 'cat', 'ls', 'find', 'sed', 'awk', 'head', 'tail',
+  'mkdir', 'rmdir', 'cd', 'pushd', 'rm', 'mv', 'cp', 'touch', 'ln', 'git',
+])
+/** 道具を入れる・外すだけの言葉。2 語目以降にあれば、テストの実行コマンドの名前があってもテストではない（R20） */
+const INSTALL_WORDS: ReadonlySet<string> = new Set(['install', 'i', 'add', 'uninstall', 'remove', 'upgrade', 'require'])
+/** 環境変数の設定（`CI=1`）。1 語目を決めるときに飛ばす（R20） */
+const ASSIGNMENT = /^[A-Za-z_]\w*=/
 
 /** heredoc（`<<'EOF'` から終わりの印まで）の本文。始まりの行の残りは残す。ヒアストリング `<<<` は除かない */
 const HEREDOC = /(?<!<)<<(?!<)-?[ \t]*(['"]?)([A-Za-z_]\w*)\1([^\n]*)[\s\S]*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/g
@@ -96,15 +103,17 @@ const isRunner = (word: string): boolean => TEST_RUNNERS.has(word.split('/').pop
 /**
  * コマンドがテストを走らせるか（R20）。heredoc の本文と、引用符で囲まれた中身（コミットメッセージなど）を
  * 除いてから、`&&`・`||`・`;`・`|`・`&`・括弧・改行で区切る。どれかの区切りが、テストを実行するコマンドの名前
- * （パス・バージョン付きでも）を含むか、2 語目以降に `test` か `test:` で始まる語を含めばテストとみなす
+ * （パス・バージョン付きでも）を含むか、2 語目以降に `test`・`test:` で始まる語・`--test` を含めばテストとみなす。
+ * 文字列・ファイル・ブランチを扱うだけのコマンドで始まる区切りと、2 語目以降に道具を入れる言葉を含む区切りは数えない
  */
 export function runsTests(command: string): boolean {
   const bare = command.replace(HEREDOC, '$3').replace(QUOTED, m => (m.startsWith('\\') ? m : '""'))
   return bare.split(/&&|\|\||[;|&()\n]/).some(segment => {
     const words = segment.trim().split(/\s+/).filter(word => word !== '')
-    while (words.length > 0 && PREFIXES.has(words[0]!)) words.shift()
+    while (words.length > 0 && (PREFIXES.has(words[0]!) || ASSIGNMENT.test(words[0]!))) words.shift()
     if (words.length === 0 || TEXT_COMMANDS.has(words[0]!)) return false
-    return words.some((word, i) => isRunner(word) || (i > 0 && /^test(:|$)/.test(word)))
+    if (words.slice(1).some(word => INSTALL_WORDS.has(word))) return false
+    return words.some((word, i) => isRunner(word) || (i > 0 && (/^test(:|$)/.test(word) || word === '--test')))
   })
 }
 
