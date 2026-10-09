@@ -43,7 +43,7 @@ import { PLAY_CHANCE, playable } from '../hooks/play'
 import { butterflyPixels, CHASE_MAX, CHASE_MIN, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 import { flatten, SPRING_FRAMES } from '../hooks/squash'
-import { chooseOutfit, OUTFIT_COLOR, type OutfitId, outfitLook } from '../hooks/outfits'
+import { chooseOutfit, OUTFIT_CHANCE, OUTFIT_COLOR, type OutfitId, outfitLook } from '../hooks/outfits'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -2688,10 +2688,12 @@ const whites = (actor: Actor, columns = 20) =>
     line.flatMap((color, px) => (color === OUTFIT_COLOR ? [`${px - actor.x},${y}`] : [])),
   )
 
-test('outfits R1・契約 chooseOutfit: 乱数の 5 等分ごとに、なし・王冠・サングラス・ヘッドフォン・小鳥を選ぶ', () => {
-  const picked = [0, 1, 2, 3, 4].map(i => chooseOutfit(() => (i + 0.5) / 5))
-  expect(picked).toEqual([null, 'crown', 'shades', 'headphones', 'bird'])
-  expect(chooseOutfit(() => 0)).toBeNull()
+test('outfits R1・契約 chooseOutfit: 9 割は飾りなし、残りの 1 割を 4 等分して王冠・サングラス・ヘッドフォン・小鳥を選ぶ', () => {
+  expect(OUTFIT_CHANCE).toBe(1 / 10)
+  expect([0, 0.5, 0.8999].map(r => chooseOutfit(() => r))).toEqual([null, null, null])
+  const picked = [0, 1, 2, 3].map(i => chooseOutfit(() => 0.9 + ((i + 0.5) / 4) * 0.1))
+  expect(picked).toEqual(['crown', 'shades', 'headphones', 'bird'])
+  expect(chooseOutfit(() => 0.9)).toBe('crown')
   expect(chooseOutfit(() => 0.99999)).toBe('bird')
   let calls = 0
   chooseOutfit(() => {
@@ -2866,8 +2868,8 @@ test('outfits R1・R3・register: outfits がオン（既定）なら、現れ�
     return { value: {} }
   })
   const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
-  // 1 回で飾りなしを引く確率は 1/5。10 回続けて引く確率は 1000 万分の 2 未満
-  for (let i = 0; i < 10 && !frames.some(cells => cellColors(cells).has(OUTFIT_COLOR)); i += 1) {
+  // 1 回で飾りなしを引く確率は 9/10。200 回続けて引く確率は 10 億分の 1 未満
+  for (let i = 0; i < 200 && !frames.some(cells => cellColors(cells).has(OUTFIT_COLOR)); i += 1) {
     await ui.redraw(bandProps(true, 40))
     await clock.advance(2000)
     await ui.redraw(bandProps(false, 40))

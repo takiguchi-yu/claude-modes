@@ -10,8 +10,10 @@ import { CLAWD_EYES, type Facing, type Pose } from './mascots'
 
 export type OutfitId = 'crown' | 'shades' | 'headphones' | 'bird'
 
-/** R1 で選ぶ候補。先頭の null は飾りなし */
-const CHOICES: readonly (OutfitId | null)[] = [null, 'crown', 'shades', 'headphones', 'bird']
+/** R1 で選ぶ飾り */
+const OUTFITS: readonly OutfitId[] = ['crown', 'shades', 'headphones', 'bird']
+/** 飾りを付けて現れる確率（R1）。主役は飾りなしの Clawd なので、たまにだけ付ける */
+export const OUTFIT_CHANCE = 1 / 10
 
 /** 飾りの白 */
 export const OUTFIT_COLOR = 0xf2f0eb
@@ -29,9 +31,15 @@ export type Look = {
   readonly side?: 'left' | 'right'
 }
 
-/** 飾りを 1 つ選ぶ（R1）。5 通りが同じ確率 */
-export const chooseOutfit = (random: () => number): OutfitId | null =>
-  CHOICES[Math.min(CHOICES.length - 1, Math.floor(random() * CHOICES.length))]!
+/**
+ * 飾りを選ぶ（R1）。乱数が 1 - OUTFIT_CHANCE 未満なら飾りなし。それ以上なら、残りの区間を 4 等分して飾りを 1 つ選ぶ
+ */
+export function chooseOutfit(random: () => number): OutfitId | null {
+  const r = random()
+  const plain = 1 - OUTFIT_CHANCE
+  if (r < plain) return null
+  return OUTFITS[Math.min(OUTFITS.length - 1, Math.floor(((r - plain) / OUTFIT_CHANCE) * OUTFITS.length))]!
+}
 
 /** 文字で描いた行（# が白）を点にする。rows[0] が y = top */
 const art = (top: number, ...rows: readonly string[]): Dot[] =>

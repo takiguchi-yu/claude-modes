@@ -24,7 +24,7 @@
     "outfits": {
       "type": "boolean",
       "title": "Outfits",
-      "description": "Each time Clawd appears, he puts on a random outfit (crown, party hat, shades, headphones or a little bird), or none.",
+      "description": "Now and then (about 1 in 10 appearances), Clawd shows up wearing an outfit: a crown, shades, headphones or a little bird.",
       "default": true
     }
   }
