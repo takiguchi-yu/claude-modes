@@ -22,6 +22,7 @@ import { flutter, GAP, launch, scare, WIDTH as BUTTERFLY_WIDTH } from './butterf
 import { type Play, PLAY_CHANCE, type PlayKind, playable } from './play'
 import { CHEER_FRAMES } from './cheer'
 import { liftOf, PRESSED, settle, type Squash, unpress } from './squash'
+import type { OutfitId } from './outfits'
 import { poseOf, start, step, type Wanderer } from './wander'
 
 export const MAIN = 'main'
@@ -54,6 +55,8 @@ export type Member = {
   readonly cheer: number
   /** 会話の圧縮で押しつぶされている・戻っている。null ならふつう（.scratch/squash/spec.md） */
   readonly squash: Squash | null
+  /** 飾り。本体だけが持ち、仲間は常に null（.scratch/outfits/spec.md の R4） */
+  readonly outfit: OutfitId | null
 }
 
 /** 活動がこのコマ数途切れたら居眠りする（既定 60 秒） */
@@ -104,7 +107,7 @@ const PARADE_PAUSE = { min: 5, max: 15 }
 export type Crew = readonly Member[]
 
 export const assemble = (): Crew => [
-  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null },
+  { id: MAIN, mascot: 'clawd', color: ORANGE, wanderer: start(), presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null, outfit: null },
 ]
 
 /** 消えかけも含めて、いまいるサブエージェントの数 */
@@ -155,10 +158,15 @@ const emoteOf = (m: Member, timing: Timing): Emote['kind'] | null =>
 const choose = <T>(items: readonly T[], random: () => number): T =>
   items[Math.min(items.length - 1, Math.floor(random() * items.length))]!
 
-/** 本体の出入り。作業が始まればその場に現れ、終われば消えていく */
-export function setMain(crew: Crew, isWorking: boolean): Crew {
+/**
+ * 本体の出入り。作業が始まればその場に現れ、終われば消えていく。
+ * 消えきった状態から現れ始めるときは、dress があれば飾りを選び直す（.scratch/outfits/spec.md の R1・R2）
+ */
+export function setMain(crew: Crew, isWorking: boolean, dress?: () => OutfitId | null): Crew {
   const [main = assemble()[0]!, ...agents] = crew
-  return [isWorking ? shown(main) : hidden(main), ...agents]
+  if (!isWorking) return [hidden(main), ...agents]
+  const dressed = dress !== undefined && main.presence.kind === 'gone' ? { ...main, outfit: dress() } : main
+  return [shown(dressed), ...agents]
 }
 
 /**
@@ -190,7 +198,7 @@ export function sync(
     usedMascots.add(mascot)
     usedColors.add(color)
     const x = Math.floor(random() * (roomFor(mascot, canvas) + 1))
-    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null }))
+    added.push(shown({ id, mascot, color, wanderer: { ...start(), x }, presence: GONE, idle: 0, busy: 0, startle: 0, prop: null, parade: null, play: null, cheer: 0, squash: null, outfit: null }))
   }
   // parade-rejoin の R8: 行列の間に来た仲間は、最後尾に続く歩けない仲間より前に入れる
   let at = kept.length
@@ -484,7 +492,7 @@ export function actors(crew: Crew, timing: Timing = DEFAULT_TIMING): Actor[] {
 
 /** 1 体の見え方（紙吹雪を除く） */
 function actorOf(m: Member, timing: Timing): Actor {
-  const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color }
+  const base = { mascot: m.mascot, x: m.wanderer.x, color: m.color, ...(m.outfit === null ? {} : { outfit: m.outfit }) }
   const fading = look(m.presence)
   if (fading === null && m.squash?.kind === 'pressed') {
     // squash の R2: つぶれた絵（幅 + 2）を 1 ピクセル左から描く。道具・記号は描かない

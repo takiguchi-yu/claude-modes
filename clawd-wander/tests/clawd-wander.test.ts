@@ -43,6 +43,7 @@ import { PLAY_CHANCE, playable } from '../hooks/play'
 import { butterflyPixels, CHASE_MAX, CHASE_MIN, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
 import { flatten, SPRING_FRAMES } from '../hooks/squash'
+import { chooseOutfit, OUTFIT_COLOR, type OutfitId, outfitLook } from '../hooks/outfits'
 
 const PLUGIN = 'clawd-wander'
 const BLUE = 0x6a9bcc
@@ -57,10 +58,10 @@ const bandProps = (isWorking: boolean, bodyColumns = 40) => ({
 })
 
 /**
- * 実際の帯を使うテストの設定。ひとり遊びは乱数で始まり、テストから乱数は決められないので止める
- * （偶然の遊びで道具が隠れないように。.scratch/play/spec.md の R5）
+ * 実際の帯を使うテストの設定。ひとり遊びと飾りは乱数で決まり、テストから乱数は決められないので止める
+ * （偶然の遊びで道具が隠れたり、飾りの白で色が増えたりしないように。.scratch/play/spec.md の R5・.scratch/outfits/spec.md の R3）
  */
-const NO_PLAY = { options: { play: false } }
+const STEADY = { options: { play: false, outfits: false } }
 
 const band = (isWorking: boolean, bodyColumns = 40) => ({
   plugin: PLUGIN,
@@ -689,7 +690,7 @@ test('emotes の R4: 「!」は持ち主の色ではなく赤で描く', () => {
   }
 })
 
-test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', NO_PLAY, async ($, on) => {
+test('register: ツールの呼び出しが失敗すると、本体が「!」を出す', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1000,7 +1001,7 @@ test('R8・T1・T2・T3・T5: 驚き中・居眠り中・出入り中・道具�
   expect(actors(dozing)[0]!.prop).toBeUndefined()
 })
 
-test('register: Edit の呼び出しで本体がハンマーを持つ', NO_PLAY, async ($, on) => {
+test('register: Edit の呼び出しで本体がハンマーを持つ', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1020,7 +1021,7 @@ test('register: Edit の呼び出しで本体がハンマーを持つ', NO_PLAY,
   await ui.unmount()
 })
 
-test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', NO_PLAY, async ($, on) => {
+test('register・R22: 4 つの道具はどれも、道具の色で帯に描かれ、エンジンが受け付ける', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1044,7 +1045,7 @@ test('register・R22: 4 つの道具はどれも、道具の色で帯に描か�
   await ui.unmount()
 })
 
-test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', NO_PLAY, async ($, on) => {
+test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash でフラスコを持ち、ほかの Bash では持たない', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1084,7 +1085,7 @@ test('register・R17・R20・R11: Agent で旗、テストを走らせる Bash �
 const heldLately = (frames: string[], before: number, columns: number) =>
   frames.slice(-50).some(cells => litCount(decode(cells, columns).lines) - before >= 8)
 
-test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', NO_PLAY, async ($, on) => {
+test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち続け、終わってから 10 秒でしまう', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1112,7 +1113,7 @@ test('register・R12・R11・R4: 10 秒を超える呼び出しの間も持ち�
   await ui.unmount()
 })
 
-test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', NO_PLAY, async ($, on) => {
+test('register・R13: 呼び出しが例外で抜けても、持ちっぱなしにならない', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1138,7 +1139,7 @@ test('register・R13: 呼び出しが例外で抜けても、持ちっぱなし�
 test(
   'register・R16: 呼び出しが中断されたら、その時点で使い終えたとみなし、10 秒でしまう',
   {
-    ...NO_PLAY,
+    ...STEADY,
     plugins: [
       {
         name: 'interrupter',
@@ -1178,7 +1179,7 @@ test(
   },
 )
 
-test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', NO_PLAY, async ($, on) => {
+test('register・R11・R8: 拒否されても使い終えたとみなし、驚き終えてから見せて、10 秒でしまう', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1203,14 +1204,14 @@ test('register・R11・R8: 拒否されても使い終えたとみなし、驚�
 
 // ---- 帯への描画 ---------------------------------------------------------------
 
-test('Claude が待機中なら何も描かない', NO_PLAY, async ($, on) => {
+test('Claude が待機中なら何も描かない', STEADY, async ($, on) => {
   beneath(on)
   const ui = await $.ui.mount({ ...band(false), surface: 'terminal' })
   expect(await ui.find({ key: 'clawd' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', NO_PLAY, async ($, on) => {
+test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod の分も残す', STEADY, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
@@ -1221,7 +1222,7 @@ test('作業中はプロンプト上の帯に Clawd を描き、ほかの mod �
   await ui.unmount()
 })
 
-test('作業中は歩き回り、作業が終わると止まる', NO_PLAY, async ($, on) => {
+test('作業中は歩き回り、作業が終わると止まる', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1247,7 +1248,7 @@ test('作業中は歩き回り、作業が終わると止まる', NO_PLAY, async
   await ui.unmount()
 })
 
-test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', NO_PLAY, async ($, on) => {
+test('R1: サブエージェントが動いている間は、本体の作業が終わっても本体も仲間も残り、仲間が終わると本体も消える', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   let agents: AgentInfo[] = [agent('a1', 'running'), agent('a2', 'completed')]
@@ -1283,7 +1284,7 @@ test('R1: サブエージェントが動いている間は、本体の作業が�
   await ui.unmount()
 })
 
-test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', NO_PLAY, async ($, on) => {
+test('書き換えが続けて通らなくても止まらず、帯を描き直させてから続ける', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   let renders = 0
   on('ui.render', async ($, e) => {
@@ -1310,7 +1311,7 @@ test('書き換えが続けて通らなくても止まらず、帯を描き直�
   await ui.unmount()
 })
 
-test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', NO_PLAY, async ($, on) => {
+test('タイマーが黙って終わっても、次のツール呼び出しで張り直す', STEADY, async ($, on) => {
   let refuse = false
   // mock.clock も clock.every に掛かるので、こちらはアニメーションの 100ms 周期だけに絞る
   on('clock.every', { ms: 100 }, async (_$, e, next) => (refuse ? { deny: 'refused by the test' } : next(e)))
@@ -1342,7 +1343,7 @@ test('タイマーが黙って終わっても、次のツール呼び出しで�
   await ui.unmount()
 })
 
-test('Raster の無い画面では描かない', NO_PLAY, async ($, on) => {
+test('Raster の無い画面では描かない', STEADY, async ($, on) => {
   mock.clock(on)
   beneath(on)
   const ui = await $.ui.mount({ ...band(true), surface: 'desktop' })
@@ -1877,7 +1878,7 @@ test('R23・S13〜S18・契約 grab・relax・decay: 持ち替えてから 15 �
   expect(decayBy(short, 3)).toBeNull()
 })
 
-test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', NO_PLAY, async ($, on) => {
+test('register・R23: Read のすぐあとにテストの Bash が始まっても、虫めがねを見せてからフラスコに持ち替える', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1931,7 +1932,7 @@ test('config R1: 居眠りまでのコマ数を timing で渡すと、そのコ�
   expect(actors(crew)[0]!.pose).not.toBe('sleep') // 既定（60 秒）ならまだ起きている（R4）
 })
 
-test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { play: false, doze_seconds: 2 } }, async ($, on) => {
+test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2 秒たつと居眠りの zZ を描く', { options: { play: false, outfits: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1949,7 +1950,7 @@ test('config R1・register: doze_seconds = 2 なら、ツールを使わずに 2
   await ui.unmount()
 })
 
-test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { play: false, prop_seconds: 3 } }, async ($, on) => {
+test('config R2・register: prop_seconds = 3 なら、道具を使い終えてから 3 秒でしまう', { options: { play: false, outfits: false, prop_seconds: 3 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -1993,7 +1994,7 @@ test('emotes R11〜R13・engage・disengage: 呼び出しが動いている間�
   expect(JSON.stringify(busy)).toBe(snapshot) // crew を変更しない
 })
 
-test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { play: false, doze_seconds: 2 } }, async ($, on) => {
+test('emotes R11・register: 居眠りの秒数を超えてテストが走っても眠らず、フラスコを持ち続け、終わってから眠る', { options: { play: false, outfits: false, doze_seconds: 2 } }, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -2210,11 +2211,11 @@ async function playsWithin($: Parameters<Parameters<typeof test>[1]>[0], on: On,
   return played
 }
 
-test('play R5・T1・register: play が false なら、10 分ひとりで歩いてもひとり遊びをしない', { options: { play: false, doze_seconds: 3600 } }, async ($, on) => {
+test('play R5・T1・register: play が false なら、10 分ひとりで歩いてもひとり遊びをしない', { options: { play: false, outfits: false, doze_seconds: 3600 } }, async ($, on) => {
   expect(await playsWithin($, on, 10)).toBe(false)
 })
 
-test('play R1・R5・register: play がオン（既定）なら、10 分ひとりで歩く間にひとり遊びをする', { options: { doze_seconds: 3600 } }, async ($, on) => {
+test('play R1・R5・register: play がオン（既定）なら、10 分ひとりで歩く間にひとり遊びをする', { options: { outfits: false, doze_seconds: 3600 } }, async ($, on) => {
   expect(await playsWithin($, on, 10)).toBe(true)
 })
 
@@ -2277,7 +2278,7 @@ test('cheer R4・R5: 紙吹雪は道具や歩きに重ねて描き、出入り�
   expect([0, 1, 2, 3].some(i => hasConfetti(paint(actors(advanceBy(held, i, 200)), 40)))).toBe(true)
 })
 
-test('cheer R1・R3・register: テストの Bash が成功したときだけ紙吹雪を降らせる', NO_PLAY, async ($, on) => {
+test('cheer R1・R3・register: テストの Bash が成功したときだけ紙吹雪を降らせる', STEADY, async ($, on) => {
   const clock = mock.clock(on)
   beneath(on)
   on('agent.list', async () => ({ value: [] }))
@@ -2351,7 +2352,7 @@ test('squash R4・R5・R6・S2・S8: 押しつぶしの間は行列・波乗り�
 
 /** 圧縮をテストから起こすためのプラグイン（会話を足す役と、CompactNow の呼び出しを合図に圧縮を起こす役） */
 const COMPACTION = {
-  ...NO_PLAY,
+  ...STEADY,
   plugins: [
     {
       name: 'transcript',
@@ -2602,3 +2603,221 @@ test('butterfly R2・R8・paint: 追いかけている間、帯に蝶々（黄�
   expect(cellColors(cells).has(0xf2c94c)).toBe(true)
 })
 
+// ---- Clawd の飾り（.scratch/outfits/spec.md） -----------------------------------------
+
+const OUTFIT_IDS: readonly OutfitId[] = ['crown', 'partyHat', 'shades', 'headphones', 'bird']
+
+/** cells を 1 ピクセルずつの色に戻す。空きは null（背景の色が付いたマスの空きは、その背景の色） */
+function colorGrid(cells: string, columns: number): (number | null)[][] {
+  const QUADRANTS = ' ▗▖▄▝▐▞▟▘▚▌▙▀▜▛█'
+  const words = new Uint32Array(Uint8Array.from(atob(cells), c => c.charCodeAt(0)).buffer)
+  const grid = Array.from({ length: SPRITE_ROWS * 2 }, () => Array.from({ length: columns * 2 }, (): number | null => null))
+  for (let row = 0; row < SPRITE_ROWS; row += 1) {
+    for (let col = 0; col < columns; col += 1) {
+      const at = (row * columns + col) * 3
+      const bits = QUADRANTS.indexOf(String.fromCodePoint(words[at]!))
+      const back = words[at + 2] === 0x01000000 ? null : words[at + 2]!
+      ;[0, 1, 2, 3].forEach(i => {
+        grid[row * 2 + (i >> 1)]![col * 2 + (i & 1)] = (bits & (8 >> i)) !== 0 ? words[at + 1]! : back
+      })
+    }
+  }
+  return grid
+}
+
+/** 白（飾りの色）のピクセルの位置（絵の左端 x からのずれ）を "dx,y" で */
+const whites = (actor: Actor, columns = 20) =>
+  colorGrid(paint([actor], columns), columns).flatMap((line, y) =>
+    line.flatMap((color, px) => (color === OUTFIT_COLOR ? [`${px - actor.x},${y}`] : [])),
+  )
+
+test('outfits R1・契約 chooseOutfit: 乱数の 6 等分ごとに、なし・王冠・三角帽・サングラス・ヘッドフォン・小鳥を選ぶ', () => {
+  const picked = [0, 1, 2, 3, 4, 5].map(i => chooseOutfit(() => (i + 0.5) / 6))
+  expect(picked).toEqual([null, 'crown', 'partyHat', 'shades', 'headphones', 'bird'])
+  expect(chooseOutfit(() => 0)).toBeNull()
+  expect(chooseOutfit(() => 0.99999)).toBe('bird')
+  let calls = 0
+  chooseOutfit(() => {
+    calls += 1
+    return 0.5
+  })
+  expect(calls).toBe(1)
+})
+
+test('outfits R1・R2・契約 setMain: 消えきった状態から現れ始めるときだけ選び、それ以外は変えない', () => {
+  let calls = 0
+  const dress = () => {
+    calls += 1
+    return 'crown' as const
+  }
+  // 現れ始めるときに選ぶ
+  let crew = setMain(assemble(), true, dress)
+  expect(crew[0]!.outfit).toBe('crown')
+  expect(calls).toBe(1)
+  // 現れかけ・いる間は選び直さない
+  crew = setMain(crew, true, () => 'bird')
+  crew = setMain(advanceBy(crew, FADE_FRAMES), true, () => 'bird')
+  expect(crew[0]!.outfit).toBe('crown')
+  // 跳ねる・消えかけから現れ直しても選び直さない
+  crew = setMain(advanceBy(setMain(crew, false), LEAP_FRAMES + 2), true, () => 'bird')
+  expect(crew[0]!.presence.kind).toBe('arriving')
+  expect(crew[0]!.outfit).toBe('crown')
+  // 消えきってから現れ直すと選び直す
+  crew = setMain(advanceBy(setMain(advanceBy(crew, FADE_FRAMES), false), LEAP_FRAMES + FADE_FRAMES), false)
+  expect(crew[0]!.presence.kind).toBe('gone')
+  expect(setMain(crew, true, () => 'bird')[0]!.outfit).toBe('bird')
+  // dress が無ければ、いまと同じ（飾りは変えない）
+  expect(setMain(assemble(), true)[0]!.outfit).toBeNull()
+  expect(setMain(crew, true)[0]!.outfit).toBe('crown')
+  // 引っ込めるときは dress を呼ばない
+  calls = 0
+  setMain(crew, false, dress)
+  expect(calls).toBe(0)
+})
+
+test('outfits R4: 仲間は飾りを持たず、描く Actor にも付かない', () => {
+  const crew = advanceBy(sync(setMain(assemble(), true, () => 'crown'), ['a', 'b'], () => 0.3, 200), FADE_FRAMES, 200)
+  expect(crew.slice(1).map(m => m.outfit)).toEqual([null, null])
+  const drawn = actors(crew)
+  expect(drawn[0]!.outfit).toBe('crown')
+  expect(drawn.slice(1).every(a => !('outfit' in a))).toBe(true)
+})
+
+test('outfits R14: 飾りの無い本体の Actor には outfit が付かない', () => {
+  expect('outfit' in actors(advanceBy(setMain(assemble(), true), FADE_FRAMES))[0]!).toBe(false)
+})
+
+test('outfits R5・R12: 正面・直立の飾りは、表どおりの位置に白で描く。三角帽は x = 7 が奇数ピクセルに来るなら左へ 1 ずらす', () => {
+  const at = (rows: string[]) => rows.flatMap((row, y) => [...row].flatMap((c, dx) => (c === '#' ? [`${dx},${y}`] : [])))
+  expect(whites(clawd(0, { outfit: 'crown' }))).toEqual(at(['...#....##....#...', '...############...']))
+  expect(whites(clawd(1, { outfit: 'partyHat' }))).toEqual(at(['........##........', '.......####.......']))
+  expect(whites(clawd(0, { outfit: 'partyHat' }))).toEqual(at(['.......##.........', '......####........']))
+  expect(whites(clawd(0, { outfit: 'headphones' }))).toEqual(at(['...############...', '..##..........##..']))
+  // サングラスは目（5・12）を含む 3 ピクセルのレンズ
+  expect(whites(clawd(0, { outfit: 'shades' }))).toEqual(['4,2', '5,2', '6,2', '11,2', '12,2', '13,2'])
+  // 小鳥は右の頭の横に v の字。x = 16 が奇数ピクセルに来るなら左へ 1 ずらす
+  expect(whites(clawd(0, { outfit: 'bird' })).sort()).toEqual(['16,0', '17,1', '18,0'])
+  expect(whites(clawd(1, { outfit: 'bird' })).sort()).toEqual(['15,0', '16,1', '17,0'])
+})
+
+test('outfits R6: 浮いている・押しつぶされている・波乗りの間は白を描かない。浮いていても細目は残す', () => {
+  for (const outfit of OUTFIT_IDS) {
+    expect(whites(clawd(4, { outfit, lift: 1 }))).toEqual([])
+    expect(whites(clawd(4, { outfit, squashed: true }))).toEqual([])
+    expect(whites(clawd(4, { outfit, surf: { heading: 'right', fade: 1 } }), 40)).toEqual([])
+  }
+  // 細目: 正面の目 5・12 に加えて 6・11 も空く（浮き 1 なので y = 1）
+  const lifted = pixels(decode(paint([clawd(0, { outfit: 'bird', lift: 1 })], 9), 9).lines)
+  expect([5, 6, 11, 12].map(x => lifted[1]![x])).toEqual([false, false, false, false])
+  expect([4, 7, 10, 13].map(x => lifted[1]![x])).toEqual([true, true, true, true])
+})
+
+test('outfits R7・T5・T6: 小鳥は背中側（右向きなら左、それ以外は右）に描き、反対側の道具とは一緒に描く', () => {
+  expect(whites(clawd(10, { outfit: 'bird', facing: 'left' }), 30).sort()).toEqual(['16,0', '17,1', '18,0'])
+  expect(whites(clawd(10, { outfit: 'bird', facing: 'right' }), 30).sort()).toEqual(['-1,0', '0,1', '1,0'])
+  // T6: 右を向いて右手に道具を持つと、小鳥は左に描く
+  const holding = clawd(10, { outfit: 'bird', facing: 'right', prop: { kind: 'hammer', side: 'right', raised: false } })
+  expect(whites(holding, 40).sort()).toEqual(['-1,0', '0,1', '1,0'])
+})
+
+test('outfits R8・T1・T3・T4: 驚いている・同じ側に道具を描く・浮いているコマは小鳥を描かない', () => {
+  expect(whites(clawd(10, { outfit: 'bird', emote: { kind: 'startle' } }), 30)).toEqual([])
+  // 正面を向くと道具は右手（props の T4）で、小鳥と同じ側
+  expect(whites(clawd(10, { outfit: 'bird', prop: { kind: 'hammer', side: 'right', raised: false } }), 30)).toEqual([])
+  // 右を向いているが帯の左端で右に収まらず、道具を左（小鳥の側）に持ち替えたとき（props の R21）
+  const swapped = clawd(10, { outfit: 'bird', facing: 'right', prop: { kind: 'flask', side: 'right', raised: false } })
+  expect(whites(swapped, 15)).toEqual([])
+  expect(whites(clawd(10, { outfit: 'bird', lift: 1 }), 30)).toEqual([])
+})
+
+test('outfits R9・T2: 居眠りしている間、小鳥は寝姿の頭の上にとまる', () => {
+  const sleeping = clawd(0, { outfit: 'bird', pose: 'sleep', emote: { kind: 'doze', high: true } })
+  expect(whites(sleeping).sort()).toEqual(['10,0', '8,0', '9,1'])
+})
+
+test('outfits R10: 居眠りしている間、サングラスは描かない。ほかの帽子は寝姿の頭にかぶる', () => {
+  expect(whites(clawd(0, { outfit: 'shades', pose: 'sleep' }))).toEqual([])
+  for (const outfit of ['crown', 'partyHat', 'headphones'] as const) {
+    const dots = whites(clawd(0, { outfit, pose: 'sleep' }))
+    expect(dots.length).toBeGreaterThan(0)
+    expect(dots.every(d => Number(d.split(',')[1]) <= 1)).toBe(true) // 寝姿の頭（y = 2）より上
+  }
+})
+
+test('outfits R11: 小鳥を付けると目が横長の細目になり、ほかの飾りでは目の形を変えない', () => {
+  for (const [facing, holes] of [['left', [4, 5, 10, 11]], ['front', [5, 6, 11, 12]], ['right', [6, 7, 12, 13]]] as const) {
+    const eyes = pixels(decode(paint([clawd(0, { outfit: 'bird', facing })], 10), 10).lines)[2]!
+    expect(eyes.slice(3, 15).flatMap((on, i) => (on ? [] : [i + 3]))).toEqual([...holes])
+  }
+  const plain = pixels(decode(paint([clawd(0, { outfit: 'crown' })], 10), 10).lines)[2]!
+  expect(plain.slice(3, 15).flatMap((on, i) => (on ? [] : [i + 3]))).toEqual([5, 12])
+})
+
+test('outfits R12: どの飾り・向き・ポーズ・x の偶奇でも、描いた結果を 1 ピクセルずつ戻すと意図どおりの色になる', () => {
+  const facings = ['left', 'front', 'right'] as const
+  const poses = ['stand', 'stepB', 'sleep'] as const
+  for (const outfit of OUTFIT_IDS) {
+    for (const facing of facings) {
+      for (const pose of poses) {
+        for (const x of [4, 5]) {
+          const look = outfitLook(outfit, facing, pose)
+          const want = Array.from({ length: SPRITE_ROWS * 2 }, () => Array.from({ length: 40 }, (): number | null => null))
+          const body = MASCOTS.clawd.draw(facing, pose).map(row => [...row])
+          for (const hole of look.holes) body[hole.y]![hole.dx] = false
+          body.forEach((row, y) => row.forEach((on, dx) => on && (want[y]![x + dx] = ORANGE)))
+          const shift = look.align !== undefined && (x + look.align.column) % 2 === 1 ? look.align.nudge : 0
+          for (const dot of look.dots) want[dot.y]![x + dot.dx + shift] = OUTFIT_COLOR
+          const got = colorGrid(paint([clawd(x, { outfit, facing, pose })], 20), 20)
+          expect({ outfit, facing, pose, x, grid: got }).toEqual({ outfit, facing, pose, x, grid: want })
+        }
+      }
+    }
+  }
+})
+
+test('outfits R13: 薄くなっている間は、飾りの白も間引く', () => {
+  const full = whites(clawd(0, { outfit: 'crown' })).length
+  const faded = whites(clawd(0, { outfit: 'crown', opacity: 0.5 })).length
+  expect(faded).toBeGreaterThan(0)
+  expect(faded).toBeLessThan(full)
+})
+
+test('outfits R3・register: outfits を false にすると、何度現れても飾りの白を描かない', { options: { play: false, outfits: false } }, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+  for (let i = 0; i < 6; i += 1) {
+    await ui.redraw(bandProps(true, 40))
+    await clock.advance(2000)
+    await ui.redraw(bandProps(false, 40))
+    await clock.advance(3000)
+  }
+  expect(frames.length).toBeGreaterThan(0)
+  expect(frames.some(cells => cellColors(cells).has(OUTFIT_COLOR))).toBe(false)
+  await ui.unmount()
+})
+
+test('outfits R1・R3・register: outfits がオン（既定）なら、現れ直すうちに飾りの白を描く', { options: { play: false } }, async ($, on) => {
+  const clock = mock.clock(on)
+  beneath(on)
+  const frames: string[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) frames.push(e.cells)
+    return { value: {} }
+  })
+  const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
+  // 1 回で飾りなしを引く確率は 1/6。10 回続けて引く確率は 1 億分の 2 未満
+  for (let i = 0; i < 10 && !frames.some(cells => cellColors(cells).has(OUTFIT_COLOR)); i += 1) {
+    await ui.redraw(bandProps(true, 40))
+    await clock.advance(2000)
+    await ui.redraw(bandProps(false, 40))
+    await clock.advance(3000)
+  }
+  expect(frames.some(cells => cellColors(cells).has(OUTFIT_COLOR))).toBe(true)
+  await ui.unmount()
+})

@@ -57,8 +57,8 @@ const CLAWD_BODY = [
   '...############...',
 ]
 
-// 目の穴の x（胴体の 2 行目に開ける）。正面がロゴどおりの位置。
-const CLAWD_EYES: Record<Facing, readonly [number, number]> = {
+// 目の穴の x（胴体の 2 行目に開ける）。正面がロゴどおりの位置。飾り（outfits.ts）も目の位置に合わせる。
+export const CLAWD_EYES: Record<Facing, readonly [number, number]> = {
   left: [4, 11],
   front: [5, 12],
   right: [6, 13],

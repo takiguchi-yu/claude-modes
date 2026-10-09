@@ -20,6 +20,12 @@
       "title": "Solo play",
       "description": "When Clawd is alone, he now and then surfs or chases a butterfly.",
       "default": true
+    },
+    "outfits": {
+      "type": "boolean",
+      "title": "Outfits",
+      "description": "Each time Clawd appears, he puts on a random outfit (crown, party hat, shades, headphones or a little bird), or none.",
+      "default": true
     }
   }
 }

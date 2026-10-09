@@ -20,6 +20,7 @@
 // session.compact: 会話の圧縮の間、そのループのマスコットをぺしゃんこにする（.scratch/squash/spec.md）。
 // 行列: タイマーの 1 コマごとに、ときどき仲間が本体のあとを一列についていく（.scratch/parade/spec.md）。
 // ひとり遊び: 本体がひとりのときは、ときどき波乗りか蝶々を追いかける遊びをする（.scratch/play/spec.md）。
+// 飾り: 本体が現れるたびに、王冠・三角帽・サングラス・ヘッドフォン・小鳥（飾りなしもある）から 1 つ選ぶ（.scratch/outfits/spec.md）。
 // Raster はターミナルにしかないので、ほかの画面では何も描かない。
 //
 // エンジンは on(...) と $.noun.method(...) をソースから読むので、$ を受け取る
@@ -52,6 +53,7 @@ import {
   wield,
 } from './crew'
 import { propFor } from './props'
+import { chooseOutfit, type OutfitId } from './outfits'
 import { WIDEST } from './mascots'
 import { paint, SPRITE_ROWS } from './sprite'
 
@@ -84,10 +86,13 @@ let lastCanvas = 0
 let timing: Timing = timingOf({})
 /** /config でひとり遊びを止めていなければ true（.scratch/play/spec.md の R5） */
 let plays = true
+/** /config で飾りを止めていなければ、本体が現れるたびに飾りを選ぶ（.scratch/outfits/spec.md の R1・R3） */
+let dress: (() => OutfitId | null) | undefined = () => chooseOutfit(Math.random)
 
 export const register: Register = (on, options) => {
   timing = timingOf(options)
   plays = options.play !== false
+  dress = options.outfits === false ? undefined : () => chooseOutfit(Math.random)
   on('agent.spawn', async ($, e, next) => {
     const result = await next(e)
     if (result.agentId !== undefined) {
@@ -144,7 +149,7 @@ export const register: Register = (on, options) => {
     const { isWorking, hasSurvey, bodyColumns } = e.props
     lastWorking = isWorking
     // 本体は、Claude が作業中か、サブエージェントが動いているか、圧縮でつぶれている・戻っている間だけ出す（.scratch/always/spec.md・.scratch/squash/spec.md の R7）
-    crew = setMain(crew, wantsMain(crew, isWorking))
+    crew = setMain(crew, wantsMain(crew, isWorking), dress)
     if (!isVisible(crew) || hasSurvey || !('Raster' in ui) || bodyColumns * 2 < WIDEST) {
       stage = null
       return next(e)
@@ -229,7 +234,7 @@ function refresh($: EngineInterface, list: readonly AgentInfo[]) {
     timing,
   )
   // 仲間がいなくなって Claude も作業しておらず、つぶれても戻ってもいなければ、本体も消え始める
-  crew = setMain(crew, wantsMain(crew, lastWorking))
+  crew = setMain(crew, wantsMain(crew, lastWorking), dress)
   if (isVisible(crew) !== wasVisible) {
     $.ui.invalidate('ui.render')
   }

@@ -10,6 +10,7 @@ import { surfPixels } from './surf'
 import { confettiPixels } from './cheer'
 import { type Butterfly, butterflyPixels } from './butterfly'
 import { flatten } from './squash'
+import { OUTFIT_COLOR, type OutfitId, outfitLook } from './outfits'
 
 /** Raster の高さ（セル） */
 export const SPRITE_ROWS = MASCOT_HEIGHT / 2
@@ -43,6 +44,8 @@ export type Actor = {
   readonly butterfly?: Butterfly
   /** 会話の圧縮で押しつぶされている（.scratch/squash/spec.md の R2）。つぶれた絵（幅 + 2）で描く */
   readonly squashed?: true
+  /** 本体の飾り（.scratch/outfits/spec.md）。省略は飾りなし */
+  readonly outfit?: OutfitId
 }
 
 export type Emote = { readonly kind: 'startle' } | { readonly kind: 'doze'; readonly high: boolean }
@@ -86,7 +89,7 @@ const BAYER = [
   [3, 11, 1, 9],
   [15, 7, 13, 5],
 ]
-const keeps = (dx: number, y: number, opacity: number) => (BAYER[y % 4]![dx % 4]! + 0.5) / 16 < opacity
+const keeps = (dx: number, y: number, opacity: number) => (BAYER[y % 4]![((dx % 4) + 4) % 4]! + 0.5) / 16 < opacity
 
 /**
  * 幅 `columns` セル × SPRITE_ROWS 行の Raster の cells を作る。
@@ -113,7 +116,12 @@ export function paint(actors: readonly Actor[], columns: number): string {
     const opacity = actor.opacity ?? 1
     // surf の R9: 波乗りの間は 1 ピクセル浮かせ、脚の行（最下行）を描かない
     const lift = actor.surf !== undefined ? 1 : (actor.lift ?? 0)
-    const drawn = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
+    // outfits の R6・R11: 押しつぶされている間は飾りを付けない。細目（holes）は浮いていても開ける
+    const look = actor.outfit !== undefined && !actor.squashed ? outfitLook(actor.outfit, actor.facing, actor.pose) : null
+    const plain = MASCOTS[actor.mascot].draw(actor.facing, actor.pose)
+    // 絵は種類ごとに使い回されているので、穴を開けるときは写してから
+    const drawn = look === null || look.holes.length === 0 ? plain : plain.map(row => [...row])
+    for (const hole of look?.holes ?? []) drawn[hole.y]![hole.dx] = false
     const bitmap = actor.squashed ? flatten(drawn) : drawn
     bitmap.forEach((line, sy) =>
       line.forEach((on, dx) => {
@@ -125,6 +133,8 @@ export function paint(actors: readonly Actor[], columns: number): string {
         dots.push(y * width + x)
       }),
     )
+    // 道具を描いた側（outfits の R8 で使う）
+    let propSide: 'left' | 'right' | null = null
     if (actor.prop !== undefined) {
       // 道具は絵の左右の端の塗りから PROP_GAP（1 ピクセル）空けて置く。向いている側で帯からはみ出し、
       // 反対側なら収まるときは、反対の手に持つ（props の R21）。どちらにも収まらなければ、はみ出す分は切る
@@ -140,7 +150,9 @@ export function paint(actors: readonly Actor[], columns: number): string {
       }
       const facing = place(actor.prop.side)
       const other = place(actor.prop.side === 'right' ? 'left' : 'right')
-      const { tool, at } = !facing.fits && other.fits ? other : facing
+      const swapped = !facing.fits && other.fits
+      const { tool, at } = swapped ? other : facing
+      propSide = swapped ? (actor.prop.side === 'right' ? 'left' : 'right') : actor.prop.side
       const dy = actor.prop.raised ? -1 : 0
       tool.forEach((row, ty) =>
         row.forEach((color, tx) => {
@@ -151,6 +163,20 @@ export function paint(actors: readonly Actor[], columns: number): string {
           if (color !== actor.color) tinted.set(y * width + x, color)
         }),
       )
+    }
+    // outfits の R5〜R13: 飾りの白。浮いている間は描かない。張り出す飾り（小鳥）は、驚いている・同じ側に道具を描くコマは描かない
+    const tucked = look?.side !== undefined && (actor.emote?.kind === 'startle' || propSide === look.side)
+    if (look !== null && lift === 0 && !tucked) {
+      const { align } = look
+      const shift = align !== undefined && (((actor.x + align.column) % 2) + 2) % 2 === 1 ? align.nudge : 0
+      for (const dot of look.dots) {
+        const dx = dot.dx + shift
+        const x = actor.x + dx
+        if (x < 0 || x >= width || dot.y < 0 || dot.y >= height) continue
+        if (opacity < 1 && !keeps(dx, dot.y, opacity)) continue
+        dots.push(dot.y * width + x)
+        tinted.set(dot.y * width + x, OUTFIT_COLOR)
+      }
     }
     if (actor.surf !== undefined) {
       // 板・水面・波は本体の塗りとして描く（重なりの輪郭は本体と一緒に扱う）
