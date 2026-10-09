@@ -1,17 +1,17 @@
-// Clawd の飾り（王冠・三角帽・サングラス・ヘッドフォン・小鳥）。本体が現れるたびに 1 つ選ぶ（飾りなしもある）。
+// Clawd の飾り（王冠・サングラス・ヘッドフォン・小鳥）。本体が現れるたびに 1 つ選ぶ（飾りなしもある）。
 //
 // 飾りは白く塗る点（dots）と、本体から抜く点（holes。小鳥の細目）で表す。どちらも絵の左上からのピクセル位置。
 // 1 マス（2×2 ピクセル）は 2 色までしか描けず、空き・橙・白が同じマスに入ると崩れる。どの飾りも浮き 0 なら
-// x の偶奇によらず崩れない形にしてある。形だけでは守れないもの（三角帽・小鳥）は align で偶数ピクセルにそろえる列を指定し、
+// x の偶奇によらず崩れない形にしてある。形だけでは守れないもの（小鳥）は align で偶数ピクセルにそろえる列を指定し、
 // 描く側が 1 ピクセルずらす。
 // 仕様は .scratch/outfits/spec.md。描画も顔ぶれも Claude Code の API も知らない。
 
 import { CLAWD_EYES, type Facing, type Pose } from './mascots'
 
-export type OutfitId = 'crown' | 'partyHat' | 'shades' | 'headphones' | 'bird'
+export type OutfitId = 'crown' | 'shades' | 'headphones' | 'bird'
 
 /** R1 で選ぶ候補。先頭の null は飾りなし */
-const CHOICES: readonly (OutfitId | null)[] = [null, 'crown', 'partyHat', 'shades', 'headphones', 'bird']
+const CHOICES: readonly (OutfitId | null)[] = [null, 'crown', 'shades', 'headphones', 'bird']
 
 /** 飾りの白 */
 export const OUTFIT_COLOR = 0xf2f0eb
@@ -29,7 +29,7 @@ export type Look = {
   readonly side?: 'left' | 'right'
 }
 
-/** 飾りを 1 つ選ぶ（R1）。6 通りが同じ確率 */
+/** 飾りを 1 つ選ぶ（R1）。5 通りが同じ確率 */
 export const chooseOutfit = (random: () => number): OutfitId | null =>
   CHOICES[Math.min(CHOICES.length - 1, Math.floor(random() * CHOICES.length))]!
 
@@ -41,7 +41,6 @@ const NONE: Look = { dots: [], holes: [] }
 
 const CROWN = art(0, '...#....##....#...', '...############...')
 const CROWN_SLEEP = art(0, '.....#..##..#.....', '.....########.....')
-const PARTY_HAT = art(0, '........##........', '.......####.......')
 const HEADPHONES = art(0, '...############...', '..##..........##..')
 const HEADPHONES_SLEEP = art(0, '.....########.....', '....#........#....')
 const BIRD_PERCHED = art(0, '........#.#.......', '.........#........')
@@ -65,9 +64,6 @@ export function outfitLook(outfit: OutfitId, facing: Facing, pose: Pose): Look {
   switch (outfit) {
     case 'crown':
       return { dots: sleeping ? CROWN_SLEEP : CROWN, holes: [] }
-    case 'partyHat':
-      // 寝姿の頭は y = 2 からなので、y = 0・1 のマスに橙が入らず、そろえなくてよい
-      return sleeping ? { dots: PARTY_HAT, holes: [] } : { dots: PARTY_HAT, holes: [], align: { column: 7, nudge: -1 } }
     case 'shades':
       return sleeping ? NONE : { dots: [...lens(leftEye), ...lens(rightEye)], holes: [] }
     case 'headphones':

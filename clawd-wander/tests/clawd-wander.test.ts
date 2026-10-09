@@ -2605,7 +2605,7 @@ test('butterfly R2・R8・paint: 追いかけている間、帯に蝶々（黄�
 
 // ---- Clawd の飾り（.scratch/outfits/spec.md） -----------------------------------------
 
-const OUTFIT_IDS: readonly OutfitId[] = ['crown', 'partyHat', 'shades', 'headphones', 'bird']
+const OUTFIT_IDS: readonly OutfitId[] = ['crown', 'shades', 'headphones', 'bird']
 
 /** cells を 1 ピクセルずつの色に戻す。空きは null（背景の色が付いたマスの空きは、その背景の色） */
 function colorGrid(cells: string, columns: number): (number | null)[][] {
@@ -2631,9 +2631,9 @@ const whites = (actor: Actor, columns = 20) =>
     line.flatMap((color, px) => (color === OUTFIT_COLOR ? [`${px - actor.x},${y}`] : [])),
   )
 
-test('outfits R1・契約 chooseOutfit: 乱数の 6 等分ごとに、なし・王冠・三角帽・サングラス・ヘッドフォン・小鳥を選ぶ', () => {
-  const picked = [0, 1, 2, 3, 4, 5].map(i => chooseOutfit(() => (i + 0.5) / 6))
-  expect(picked).toEqual([null, 'crown', 'partyHat', 'shades', 'headphones', 'bird'])
+test('outfits R1・契約 chooseOutfit: 乱数の 5 等分ごとに、なし・王冠・サングラス・ヘッドフォン・小鳥を選ぶ', () => {
+  const picked = [0, 1, 2, 3, 4].map(i => chooseOutfit(() => (i + 0.5) / 5))
+  expect(picked).toEqual([null, 'crown', 'shades', 'headphones', 'bird'])
   expect(chooseOutfit(() => 0)).toBeNull()
   expect(chooseOutfit(() => 0.99999)).toBe('bird')
   let calls = 0
@@ -2687,11 +2687,9 @@ test('outfits R14: 飾りの無い本体の Actor には outfit が付かない'
   expect('outfit' in actors(advanceBy(setMain(assemble(), true), FADE_FRAMES))[0]!).toBe(false)
 })
 
-test('outfits R5・R12: 正面・直立の飾りは、表どおりの位置に白で描く。三角帽は x = 7 が奇数ピクセルに来るなら左へ 1 ずらす', () => {
+test('outfits R5・R12: 正面・直立の飾りは、表どおりの位置に白で描く', () => {
   const at = (rows: string[]) => rows.flatMap((row, y) => [...row].flatMap((c, dx) => (c === '#' ? [`${dx},${y}`] : [])))
   expect(whites(clawd(0, { outfit: 'crown' }))).toEqual(at(['...#....##....#...', '...############...']))
-  expect(whites(clawd(1, { outfit: 'partyHat' }))).toEqual(at(['........##........', '.......####.......']))
-  expect(whites(clawd(0, { outfit: 'partyHat' }))).toEqual(at(['.......##.........', '......####........']))
   expect(whites(clawd(0, { outfit: 'headphones' }))).toEqual(at(['...############...', '..##..........##..']))
   // サングラスは目（5・12）を含む 3 ピクセルのレンズ
   expect(whites(clawd(0, { outfit: 'shades' }))).toEqual(['4,2', '5,2', '6,2', '11,2', '12,2', '13,2'])
@@ -2737,7 +2735,7 @@ test('outfits R9・T2: 居眠りしている間、小鳥は寝姿の頭の上に
 
 test('outfits R10: 居眠りしている間、サングラスは描かない。ほかの帽子は寝姿の頭にかぶる', () => {
   expect(whites(clawd(0, { outfit: 'shades', pose: 'sleep' }))).toEqual([])
-  for (const outfit of ['crown', 'partyHat', 'headphones'] as const) {
+  for (const outfit of ['crown', 'headphones'] as const) {
     const dots = whites(clawd(0, { outfit, pose: 'sleep' }))
     expect(dots.length).toBeGreaterThan(0)
     expect(dots.every(d => Number(d.split(',')[1]) <= 1)).toBe(true) // 寝姿の頭（y = 2）より上
@@ -2811,7 +2809,7 @@ test('outfits R1・R3・register: outfits がオン（既定）なら、現れ�
     return { value: {} }
   })
   const ui = await $.ui.mount({ ...band(true, 40), surface: 'terminal' })
-  // 1 回で飾りなしを引く確率は 1/6。10 回続けて引く確率は 1 億分の 2 未満
+  // 1 回で飾りなしを引く確率は 1/5。10 回続けて引く確率は 1000 万分の 2 未満
   for (let i = 0; i < 10 && !frames.some(cells => cellColors(cells).has(OUTFIT_COLOR)); i += 1) {
     await ui.redraw(bandProps(true, 40))
     await clock.advance(2000)
