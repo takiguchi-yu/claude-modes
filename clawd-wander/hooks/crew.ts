@@ -17,7 +17,7 @@ import { begin, type Heading, type Parade, record, slot } from './parade'
 import { appear, elapse, GONE, look, type Presence, retreat } from './presence'
 import { decay, grab, type Grip, PROP_FRAMES, propFor, type PropId, reach, relax } from './props'
 import { type Actor, type Emote, emoteReach, ORANGE } from './sprite'
-import { catchWave, ebb, fadeOf, recede, SURF_PACE } from './surf'
+import { catchWave, ebb, fadeOf, recede, surge, SURF_PACE } from './surf'
 import { flutter, GAP, launch, scare, WIDTH as BUTTERFLY_WIDTH } from './butterfly'
 import { type Play, PLAY_CHANCE, type PlayKind, playable } from './play'
 import { CHEER_FRAMES } from './cheer'
@@ -318,7 +318,7 @@ function ride(main: Member, surf: Extract<Play, { kind: 'surf' }>, crowded: bool
     // R3・S5: 次で端を越えるなら、その場で止まって引かせる
     if (next < 0 || next > roomFor(main.mascot, canvas)) return { ...main, play: { ...surf, ...ebb(surf) } }
     // R2・S4: 向かう側へ進み、その向きを向く
-    return { ...main, wanderer: { ...main.wanderer, x: next, facing: surf.heading, mode: 'walk', left: 1 } }
+    return { ...main, wanderer: { ...main.wanderer, x: next, facing: surf.heading, mode: 'walk', left: 1 }, play: { kind: 'surf', ...surge(surf) } }
   }
   const after = recede(surf)
   // R5・S8: 引ききったら板から降り、少し立ち止まってから歩き出す
@@ -514,7 +514,7 @@ function actorOf(m: Member, timing: Timing): Actor {
     switch (m.play.kind) {
       case 'surf':
         // surf の R9: 板に乗って向かう側を向く
-        return { ...base, facing: m.play.heading, pose: 'stand' as const, surf: { heading: m.play.heading, fade: fadeOf(m.play) } }
+        return { ...base, facing: m.play.heading, pose: 'stand' as const, surf: { heading: m.play.heading, fade: fadeOf(m.play), age: m.play.age } }
       case 'butterfly':
         // butterfly の R3・R8: 追いかけて歩き（見送る間は正面で直立）、蝶々を描く
         return { ...base, facing: m.wanderer.facing, pose: poseOf(m.wanderer), butterfly: m.play }

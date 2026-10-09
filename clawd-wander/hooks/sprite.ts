@@ -37,7 +37,7 @@ export type Actor = {
   /** 手に持つ道具。side の側に描き、raised なら 1 ピクセル上げる */
   readonly prop?: { readonly kind: PropId; readonly side: 'left' | 'right'; readonly raised: boolean }
   /** 波乗り（.scratch/surf/spec.md の R9）。1 ピクセル浮かせて脚を描かず、板・水面・波を描く。fade は波と水面の濃さ */
-  readonly surf?: { readonly heading: Heading; readonly fade: number }
+  readonly surf?: { readonly heading: Heading; readonly fade: number; readonly age?: number }
   /** 紙吹雪（.scratch/cheer/spec.md）。left は残りコマ */
   readonly confetti?: { readonly left: number }
   /** 追いかけている蝶々（.scratch/butterfly/spec.md）。蝶々の位置は帯でのピクセル */
@@ -180,7 +180,7 @@ export function paint(actors: readonly Actor[], columns: number): string {
     }
     if (actor.surf !== undefined) {
       // 板・水面・波は本体の塗りとして描く（重なりの輪郭は本体と一緒に扱う）
-      for (const { dx, y, color } of surfPixels(actor.surf.heading, actor.surf.fade)) {
+      for (const { dx, y, color } of surfPixels(actor.surf.heading, actor.surf.fade, actor.surf.age)) {
         const x = actor.x + dx
         if (x < 0 || x >= width || y < 0 || y >= height) continue
         dots.push(y * width + x)

@@ -38,7 +38,7 @@ import { FRIENDS, MASCOT_HEIGHT, type MascotId, MASCOTS } from '../hooks/mascots
 import { appear, elapse, FADE_FRAMES, GONE, HERE, LEAP_FRAMES, retreat } from '../hooks/presence'
 import { type Actor, BANG_COLOR, ORANGE, paint, SPRITE_ROWS } from '../hooks/sprite'
 import { poseOf, setOff, start, step, type Wanderer } from '../hooks/wander'
-import { EBB_FRAMES, MIN_RIDE, SURF_PACE, surfPixels } from '../hooks/surf'
+import { EBB_FRAMES, MIN_RIDE, SURF_PACE, surfPixels, SWELL_FRAMES } from '../hooks/surf'
 import { PLAY_CHANCE, playable } from '../hooks/play'
 import { butterflyPixels, CHASE_MAX, CHASE_MIN, GAP, launch, MIN_CHASE, WATCH_FRAMES } from '../hooks/butterfly'
 import { CHEER_FRAMES, confettiPixels } from '../hooks/cheer'
@@ -2090,7 +2090,7 @@ test('play R1・R2・T2〜T7・契約 startPlay・playable: 条件がそろえ�
 test('surf R2〜R5・S4・S5・S8: 1 コマ 3 ピクセル滑り、端の手前で止まって 6 コマ引き、降りて立ち止まる', () => {
   const one = advance(surfing(50), 200, () => 0.5)
   expect(one[0]!.wanderer).toMatchObject({ x: 50 + SURF_PACE, facing: 'right' }) // S4
-  expect(one[0]!.play).toEqual({ kind: 'surf', heading: 'right', ebb: null })
+  expect(one[0]!.play).toEqual({ kind: 'surf', heading: 'right', ebb: null, age: 1 })
   // S5: 次で端（置ける x の最大 182）を越えるなら、その場で止まって引き始める
   const nearEdge = surfing(50).map(m => ({ ...m, wanderer: { ...m.wanderer, x: 181 } }))
   const edge = advance(nearEdge, 200, () => 0.5)
@@ -2135,21 +2135,20 @@ test('surf R8・R9・契約 Actor.surf: 波乗りの間は板に乗って向か�
 test('surf R9・R4・契約 surfPixels: 板・水面・波・泡を描き、左へ進むときは反転し、薄くするときは板と板の真下の水面を残す', () => {
   const right = surfPixels('right', 1)
   const of = (pixels: typeof right, color: number) => pixels.filter(p => p.color === color)
-  expect(of(right, BOARD).map(p => p.dx)).toEqual(Array.from({ length: 20 }, (_, i) => i - 1)) // 本体の幅 + 2
-  expect(of(right, BOARD).every(p => p.y === 4)).toBe(true)
-  expect(of(right, FOAM).length).toBe(3)
+  expect(of(right, BOARD).filter(p => p.y === 4).map(p => p.dx)).toEqual(Array.from({ length: 20 }, (_, i) => i - 1)) // 本体の幅 + 2
+  expect(of(right, FOAM).length).toBeGreaterThanOrEqual(3)
   // 水面は波の後ろの端（-16）から板の先 + 2（20）まで、切れ目なし
   expect(right.filter(p => p.y === 5).map(p => p.dx)).toEqual(Array.from({ length: 37 }, (_, i) => i - 16))
   // 波は本体の後ろ（右へ進むなら左）
-  expect(right.filter(p => p.y < 4).every(p => p.dx < 0)).toBe(true)
+  expect(of(right, WATER).filter(p => p.y < 4).every(p => p.dx < 0)).toBe(true)
   const left = surfPixels('left', 1)
-  expect(left.filter(p => p.y < 4).every(p => p.dx > 17)).toBe(true)
+  expect(of(left, WATER).filter(p => p.y < 4).every(p => p.dx > 17)).toBe(true)
   // 薄くすると波と水面が減り、板と板の真下の水面（-1〜18）は残る
   const faded = surfPixels('right', 0.5)
-  expect(of(faded, BOARD).length).toBe(20)
+  expect(of(faded, BOARD).filter(p => p.y === 4).length).toBe(20)
   expect(faded.length).toBeLessThan(right.length)
   const gone = surfPixels('right', 0)
-  expect(gone.filter(p => p.color !== BOARD).every(p => p.y === 5 && p.dx >= -1 && p.dx <= 18)).toBe(true)
+  expect(gone.filter(p => p.color !== BOARD).every(p => p.y === 5 && p.dx >= -1 && p.dx <= 18)).toBe(true) // しぶきも消える
   expect(gone.filter(p => p.y === 5).length).toBe(20)
 })
 
@@ -2187,6 +2186,64 @@ test('surf R9・paint: 泡は、マスとの位置がどちらにずれても描
   for (const x of [30, 31]) {
     const cells = paint([clawd(x, { facing: 'right', surf: { heading: 'right', fade: 1 } })], 30)
     expect({ x, foam: cellColors(cells).has(FOAM) }).toEqual({ x, foam: true })
+  }
+})
+
+test('surf R13・契約 surfPixels: 乗っている間、波は 2 コマごとに 4 つの形を順に回し、8 コマで元に戻る', () => {
+  const key = (age: number) => JSON.stringify(surfPixels('right', 1, age))
+  expect(SWELL_FRAMES).toBe(2)
+  const shapes = [0, 2, 4, 6].map(key)
+  expect(new Set(shapes).size).toBe(4)
+  expect(key(1)).toBe(key(0))
+  expect(key(8)).toBe(key(0))
+  expect(key(9)).toBe(key(1))
+})
+
+test('surf R13・S4・S8: 乗っている間も引いている間も、波乗りのコマ数（age）が 1 ずつ増え、描く Actor に渡る', () => {
+  const one = advanceBy(surfing(50), 3, 200)
+  expect(one[0]!.play).toMatchObject({ kind: 'surf', age: 3 })
+  expect(actors(one)[0]!.surf).toMatchObject({ age: 3 })
+  const ebbing = advance(sync(one, ['a'], () => 0, 200), 200, () => 0.5) // 仲間が来て引き始めるコマは数えない（S6）
+  expect(advanceBy(ebbing, 2, 200)[0]!.play).toMatchObject({ ebb: EBB_FRAMES - 2, age: 5 })
+})
+
+test('surf R14: 板の先と後ろを、形ごとに交互に 1 ピクセル上げる', () => {
+  const raised = (age: number) => surfPixels('right', 1, age).filter(p => p.color === BOARD && p.y === 3).map(p => p.dx)
+  expect(raised(0)).toEqual([18, 19]) // 先
+  expect(raised(2)).toEqual([]) // 平ら
+  expect(raised(4)).toEqual([-1]) // 後ろ
+  expect(raised(6)).toEqual([])
+  // 左へ進むときは反転する（先は左）
+  expect(surfPixels('left', 1, 0).filter(p => p.color === BOARD && p.y === 3).map(p => p.dx)).toEqual([-1, -2])
+})
+
+test('surf R15: どの形でも、板の先の前（帯の上のほう）にしぶきを描き、引ききると消える', () => {
+  for (const age of [0, 2, 4, 6]) {
+    const bow = surfPixels('right', 1, age).filter(p => p.color === FOAM && p.dx > 18)
+    expect({ age, some: bow.length > 0, high: bow.every(p => p.y >= 1 && p.y <= 3) }).toEqual({ age, some: true, high: true })
+    expect(surfPixels('right', 0, age).filter(p => p.color === FOAM)).toEqual([])
+  }
+})
+
+test('surf R16・paint: どの形・x の偶奇でも、本体の橙と板の黄を崩さずに描き、しぶき（白）を描く', () => {
+  for (const age of [0, 2, 4, 6]) {
+    for (const x of [30, 31]) {
+      const surf = { heading: 'right' as const, fade: 1, age }
+      const grid = colorGrid(paint([clawd(x, { facing: 'right', surf })], 40), 40)
+      // 本体（1 ピクセル浮かせ、脚の行を除く）の塗りはすべて橙のまま
+      const body = MASCOTS.clawd.draw('right', 'stand')
+      body.slice(0, MASCOT_HEIGHT - 1).forEach((row, sy) =>
+        row.forEach((on, dx) => {
+          if (on && sy >= 1) expect({ age, x, dx, sy, color: grid[sy - 1]![x + dx] }).toEqual({ age, x, dx, sy, color: ORANGE })
+        }),
+      )
+      // 本体の外に橙が出ていない
+      const orange = grid.flat().filter(c => c === ORANGE).length
+      expect({ age, x, orange }).toEqual({ age, x, orange: body.slice(1, MASCOT_HEIGHT - 1).flat().filter(Boolean).length })
+      // 板の行は黄（両端の 1 ピクセルは x の偶奇で水と同じマスに入り、青になることがある。既存の R4・R9 のテストと同じく内側を見る）
+      for (let dx = 0; dx <= 17; dx += 1) expect({ age, x, dx, color: grid[4]![x + dx] }).toEqual({ age, x, dx, color: BOARD })
+      expect({ age, x, foam: grid.flat().includes(FOAM) }).toEqual({ age, x, foam: true })
+    }
   }
 })
 
